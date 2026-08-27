@@ -65,12 +65,42 @@
       <div class="topic-box"><span>Tema detectado</span><strong id="detectedTopic">Todavía no hay suficiente texto</strong></div>
       <h3>Conceptos clave</h3><div id="keywords" class="chips"></div>
       <h3>Resumen</h3><div id="summary" class="summary">Todavía no hay suficiente texto.</div>
+      <div id="languageTools" class="language-tools hidden">
+        <div class="language-detected"><span>Idioma detectado</span><strong id="detectedLanguage">English</strong></div>
+        <button id="translateGeneratedBtn" class="translate-btn">Traducir al español</button>
+      </div>
+      <div id="translationPanel" class="translation-panel hidden">
+        <div class="translation-title"><span>TRADUCCIÓN</span><strong>Material de estudio en español</strong></div>
+        <div id="translationOutput" class="translation-output"></div>
+        <div class="translation-actions">
+          <button id="useTranslatedMapBtn" class="ghost">Ver mapa traducido</button>
+          <button id="showOriginalMapBtn" class="ghost">Ver original</button>
+        </div>
+      </div>
     </aside>
   </section>
 
   <section class="card">
     <div class="head"><div><span class="kicker">MAPA CONCEPTUAL</span><h2>Cómo se conecta el tema</h2></div><div class="head-actions"><button id="exportMapPngBtn" class="ghost">Descargar PNG</button><button id="rebuildMapBtn" class="ghost">Regenerar</button></div></div>
     <div id="conceptMap" class="concept-map"><div class="empty-map"><strong>El mapa aparecerá cuando haya suficiente contenido.</strong><span>Usa ideas y frases, no solamente palabras sueltas.</span></div></div>
+  </section>
+
+
+  <section class="card study-card">
+    <div class="head">
+      <div><span class="kicker">MODO ESTUDIO</span><h2>Repaso de la sesión</h2></div>
+      <button id="copyStudyBtn" class="ghost">Copiar estudio</button>
+    </div>
+    <div class="study-grid">
+      <div class="study-block">
+        <span class="study-label">PUNTOS CLAVE</span>
+        <div id="studyPoints" class="study-content"><span class="history-empty">Todavía no hay suficiente contenido.</span></div>
+      </div>
+      <div class="study-block">
+        <span class="study-label">PREGUNTAS PARA REPASAR</span>
+        <div id="studyQuestions" class="study-content"><span class="history-empty">Todavía no hay preguntas.</span></div>
+      </div>
+    </div>
   </section>
 
   <section class="card">
