@@ -32,7 +32,8 @@ const state = {
   studyPurpose: "understand",
   currentStudy: {points:[], questions:[]},
   currentSummary: "",
-  currentProfile: null
+  currentProfile: null,
+  mapZoom: 1
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -1492,8 +1493,9 @@ function renderConceptMap(mapData) {
   if (!mapData || !mapData.branches?.length) {
     box.innerHTML =
       '<div class="empty-map"><strong>Necesito un poco más de contenido para generar el mapa.</strong>'
-      + '<span>Probá grabando algunos fragmentos más o escribiendo el tema arriba.</span></div>';
+      + '<span>Probá grabando algunos fragmentos más o agregando más material.</span></div>';
     state.currentMapCanvas = null;
+    $("expandMapBtn").disabled = true;
     return;
   }
 
@@ -1503,9 +1505,17 @@ function renderConceptMap(mapData) {
   canvas.setAttribute("aria-label", "Mapa conceptual");
   box.appendChild(canvas);
 
-  drawConceptMapToCanvas(canvas, mapData, { scale: 2, responsive: true });
+  drawConceptMapToCanvas(canvas, mapData, {scale:2, responsive:true});
+
+  canvas.style.width = "100%";
+  canvas.style.maxWidth = "100%";
+  canvas.style.height = "auto";
+  canvas.style.minWidth = "0";
+
   state.currentMapCanvas = canvas;
+  $("expandMapBtn").disabled = false;
 }
+
 
 function updateInsights(showFeedback=false) {
   const units = analysisUnits();
@@ -2123,6 +2133,64 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 
+function applyMapModalZoom() {
+  const canvas = $("mapModalCanvas");
+  if (!canvas || !canvas.dataset.logicalWidth || !canvas.dataset.logicalHeight) return;
+
+  const width = Number(canvas.dataset.logicalWidth);
+  const height = Number(canvas.dataset.logicalHeight);
+  const zoom = Math.max(.35, Math.min(2, state.mapZoom || 1));
+
+  canvas.style.width = Math.round(width * zoom) + "px";
+  canvas.style.height = Math.round(height * zoom) + "px";
+}
+
+function fitMapModal() {
+  const canvas = $("mapModalCanvas");
+  const viewport = $("mapModalViewport");
+  if (!canvas || !viewport || !canvas.dataset.logicalWidth) return;
+
+  const logicalWidth = Number(canvas.dataset.logicalWidth);
+  const available = Math.max(280, viewport.clientWidth - 24);
+  state.mapZoom = Math.min(1, available / logicalWidth);
+  applyMapModalZoom();
+  viewport.scrollTo({left:0, top:0});
+}
+
+function openMapModal() {
+  if (!state.currentMap?.branches?.length) {
+    alert("Todavía no hay un mapa conceptual para ampliar.");
+    return;
+  }
+
+  const modal = $("mapModal");
+  const canvas = $("mapModalCanvas");
+  $("mapModalTitle").textContent = prettyConcept(state.currentMap.topic || "Mapa conceptual");
+
+  const dimensions = drawConceptMapToCanvas(canvas, state.currentMap, {
+    scale:2,
+    responsive:false
+  });
+
+  canvas.dataset.logicalWidth = String(dimensions.logicalWidth);
+  canvas.dataset.logicalHeight = String(dimensions.logicalHeight);
+
+  modal.classList.remove("hidden");
+  document.body.classList.add("map-modal-open");
+
+  requestAnimationFrame(() => fitMapModal());
+}
+
+function closeMapModal() {
+  $("mapModal").classList.add("hidden");
+  document.body.classList.remove("map-modal-open");
+}
+
+function changeMapZoom(delta) {
+  state.mapZoom = Math.max(.35, Math.min(2, (state.mapZoom || 1) + delta));
+  applyMapModalZoom();
+}
+
 function exportMapPng() {
   updateInsights();
 
@@ -2309,7 +2377,15 @@ $("copyBtn").onclick = async () => {
 
 $("exportTextPdfBtn").onclick = exportTextPdf;
 $("exportTextTxtBtn").onclick = exportTextTxt;
+$("expandMapBtn").onclick = openMapModal;
 $("exportMapPngBtn").onclick = exportMapPng;
+$("closeMapModalBtn").onclick = closeMapModal;
+$("mapZoomInBtn").onclick = () => changeMapZoom(.15);
+$("mapZoomOutBtn").onclick = () => changeMapZoom(-.15);
+$("mapZoomFitBtn").onclick = fitMapModal;
+$("mapModal").onclick = event => {
+  if (event.target === $("mapModal")) closeMapModal();
+};
 document.querySelectorAll(".workspace-tab").forEach(button => {
   button.onclick = () => setAppView(button.dataset.view);
 });
@@ -2383,6 +2459,12 @@ $("installBtn").onclick = async () => {
   state.deferredPrompt = null;
   $("installBtn").classList.add("hidden");
 };
+
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !$("mapModal").classList.contains("hidden")) {
+    closeMapModal();
+  }
+});
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.recording && !state.paused) wake();
