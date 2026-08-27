@@ -186,6 +186,7 @@
       <div class="head">
         <div><span class="kicker">MAPA CONCEPTUAL</span><h2>Cómo se conecta el tema</h2></div>
         <div class="head-actions">
+          <button id="expandMapBtn" class="ghost">Ampliar mapa</button>
           <button id="exportMapPngBtn" class="ghost">Descargar PNG</button>
           <button id="rebuildMapBtn" class="ghost">Regenerar</button>
         </div>
@@ -223,6 +224,26 @@
     </section>
   </section>
 </main>
+
+<div id="mapModal" class="map-modal hidden" role="dialog" aria-modal="true" aria-label="Mapa conceptual ampliado">
+  <div class="map-modal-panel">
+    <div class="map-modal-head">
+      <div>
+        <span class="kicker">MAPA CONCEPTUAL</span>
+        <strong id="mapModalTitle">Vista ampliada</strong>
+      </div>
+      <div class="map-modal-actions">
+        <button id="mapZoomOutBtn" class="ghost" aria-label="Alejar">−</button>
+        <button id="mapZoomFitBtn" class="ghost">Ajustar</button>
+        <button id="mapZoomInBtn" class="ghost" aria-label="Acercar">+</button>
+        <button id="closeMapModalBtn" class="ghost">Cerrar</button>
+      </div>
+    </div>
+    <div id="mapModalViewport" class="map-modal-viewport">
+      <canvas id="mapModalCanvas" class="map-modal-canvas"></canvas>
+    </div>
+  </div>
+</div>
 
 <footer class="footer">
   <span>EscuchaMapa guarda tus sesiones en este dispositivo.</span>
