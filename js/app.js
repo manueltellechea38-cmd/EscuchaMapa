@@ -180,38 +180,57 @@ function updateLanguageTools(fullText) {
   return detected;
 }
 
-function splitTranslationText(text, maxLength=1500) {
+function splitTranslationText(text, maxBytes=420) {
   const source = String(text || "").trim();
   if (!source) return [];
 
-  const sentences = punctuationSentences(source);
+  const encoder = new TextEncoder();
   const chunks = [];
   let current = "";
 
-  for (const sentence of sentences.length ? sentences : [source]) {
-    const candidate = current ? current + " " + sentence : sentence;
-    if (candidate.length > maxLength && current) {
-      chunks.push(current);
-      current = sentence;
-    } else {
+  const pieces = punctuationSentences(source).length
+    ? punctuationSentences(source)
+    : source.split(/\s+/);
+
+  for (const piece of pieces) {
+    const candidate = current ? current + " " + piece : piece;
+
+    if (encoder.encode(candidate).length <= maxBytes) {
       current = candidate;
+      continue;
     }
+
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+
+    if (encoder.encode(piece).length <= maxBytes) {
+      current = piece;
+      continue;
+    }
+
+    // Very long fragment: split by words without breaking UTF-8 limits.
+    let wordChunk = "";
+    for (const word of piece.split(/\s+/)) {
+      const wordCandidate = wordChunk ? wordChunk + " " + word : word;
+      if (encoder.encode(wordCandidate).length > maxBytes && wordChunk) {
+        chunks.push(wordChunk);
+        wordChunk = word;
+      } else {
+        wordChunk = wordCandidate;
+      }
+    }
+    if (wordChunk) chunks.push(wordChunk);
   }
 
   if (current) chunks.push(current);
-
-  if (chunks.some(chunk => chunk.length > maxLength)) {
-    return source.match(new RegExp(".{1," + maxLength + "}", "gs")) || [source];
-  }
-
   return chunks;
 }
 
 async function createTranslationEngine(sourceCode, targetCode) {
-  if (
-    sourceCode !== "auto" &&
-    globalThis.Translator?.create
-  ) {
+  // Use the browser's native Translator API when available.
+  if (sourceCode !== "auto" && globalThis.Translator?.create) {
     try {
       const translator = await globalThis.Translator.create({
         sourceLanguage: sourceCode,
@@ -221,7 +240,7 @@ async function createTranslationEngine(sourceCode, targetCode) {
       return {
         type: "browser",
         translate: async text => {
-          const chunks = splitTranslationText(text);
+          const chunks = splitTranslationText(text, 900);
           const translated = [];
           for (const chunk of chunks) translated.push(await translator.translate(chunk));
           return translated.join(" ");
@@ -233,47 +252,41 @@ async function createTranslationEngine(sourceCode, targetCode) {
     }
   }
 
-  const endpoints = [
-    "https://libretranslate.com/translate",
-    "https://es.libretranslate.com/translate"
-  ];
+  // Reliable no-key fallback. MyMemory expects a concrete language pair.
+  const fallbackSource = sourceCode === "auto"
+    ? (targetCode === "es" ? "en" : "es")
+    : sourceCode;
 
   return {
     type: "online",
     translate: async text => {
-      const chunks = splitTranslationText(text);
+      const chunks = splitTranslationText(text, 420);
       const translatedChunks = [];
 
       for (const chunk of chunks) {
-        let translated = null;
-        let lastError = null;
+        const url =
+          "https://api.mymemory.translated.net/get?q="
+          + encodeURIComponent(chunk)
+          + "&langpair="
+          + encodeURIComponent(fallbackSource + "|" + targetCode)
+          + "&mt=1";
 
-        for (const endpoint of endpoints) {
-          try {
-            const response = await fetch(endpoint, {
-              method: "POST",
-              headers: {"Content-Type":"application/json"},
-              body: JSON.stringify({
-                q: chunk,
-                source: sourceCode,
-                target: targetCode,
-                format: "text",
-                alternatives: 1,
-                api_key: ""
-              })
-            });
+        const response = await fetch(url, {
+          method: "GET",
+          mode: "cors",
+          cache: "no-store"
+        });
 
-            if (!response.ok) throw new Error("HTTP " + response.status);
-            const data = await response.json();
-            if (!data.translatedText) throw new Error("Respuesta sin traducción");
-            translated = data.translatedText;
-            break;
-          } catch (error) {
-            lastError = error;
-          }
+        if (!response.ok) throw new Error("HTTP " + response.status);
+
+        const data = await response.json();
+        const translated = data?.responseData?.translatedText;
+
+        if (!translated) {
+          const message = data?.responseDetails || "Respuesta sin traducción";
+          throw new Error(message);
         }
 
-        if (!translated) throw lastError || new Error("No se pudo traducir");
         translatedChunks.push(translated);
       }
 
@@ -364,12 +377,12 @@ async function translateGeneratedContent() {
     $("translationStatus").textContent =
       engine.type === "browser"
         ? "Traducido dentro del dispositivo."
-        : "Traducido dentro de la app usando un servicio online.";
+        : "Traducido dentro de EscuchaMapa usando traducción online.";
     toast("Resultados traducidos");
   } catch (error) {
     console.warn("Traducción:", error);
     $("translationStatus").textContent =
-      "No pude completar la traducción ahora. Tus resultados originales siguen intactos.";
+      "No pude completar la traducción. Revisá tu conexión e intentá nuevamente.";
     alert("No pude traducir dentro de la app en este momento. Probá nuevamente con conexión a internet.");
   } finally {
     engine?.destroy?.();
