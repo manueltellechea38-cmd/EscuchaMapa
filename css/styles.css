@@ -93,3 +93,36 @@
   .concept-map{padding:12px}
   .concept-map-canvas{min-width:1100px}
 }
+
+/* Mapa v9: responsive sin romper el layout */
+.shell,
+.card,
+.concept-map{
+  min-width:0;
+}
+.concept-map{
+  width:100%;
+  max-width:100%;
+  overflow:hidden;
+  padding:14px;
+}
+.concept-map-canvas{
+  display:block;
+  width:100% !important;
+  max-width:100% !important;
+  height:auto !important;
+  min-width:0 !important;
+  margin:0 auto;
+  border-radius:16px;
+}
+@media(max-width:700px){
+  .concept-map{
+    padding:8px;
+    min-height:300px;
+  }
+  .concept-map-canvas{
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+  }
+}
