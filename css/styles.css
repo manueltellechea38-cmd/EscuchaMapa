@@ -216,3 +216,92 @@ label>span{display:block;color:var(--muted);font-size:12px;font-weight:700;margi
 @media(display-mode:standalone){
   body{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
 }
+/* v13 - estudio adaptativo, mapa legible y exportación */
+.study-config{
+  margin-top:16px;
+  display:grid;
+  grid-template-columns:minmax(240px,.7fr) minmax(0,1.3fr);
+  gap:12px;
+  align-items:stretch;
+}
+.study-plan-card{
+  border:1px solid rgba(124,92,255,.24);
+  background:linear-gradient(135deg,rgba(124,92,255,.10),rgba(23,34,55,.65));
+  border-radius:15px;
+  padding:13px 14px;
+}
+.study-plan-card span{
+  display:block;
+  color:#a99bff;
+  font-size:10px;
+  font-weight:850;
+  letter-spacing:.11em;
+  margin-bottom:5px;
+}
+.study-plan-card strong{display:block;color:#f2efff}
+.study-plan-card p{margin:6px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+.study-top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.download-menu{
+  display:flex;align-items:center;gap:6px;
+  padding:5px 6px 5px 10px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#0b1524;
+}
+.download-menu>span{color:var(--muted);font-size:11px;font-weight:750}
+.download-menu .ghost{padding:7px 9px}
+
+.summary{white-space:pre-line}
+
+.qa-card{
+  border:1px solid rgba(255,255,255,.075);
+  background:#0a1422;
+  border-radius:12px;
+  overflow:hidden;
+}
+.qa-card+.qa-card{margin-top:8px}
+.qa-card summary{
+  list-style:none;
+  cursor:pointer;
+  padding:11px 12px;
+  font-weight:700;
+  color:#e6ebf3;
+  display:flex;
+  gap:8px;
+}
+.qa-card summary::-webkit-details-marker{display:none}
+.qa-card summary>span{color:#a99bff}
+.qa-answer{
+  border-top:1px solid rgba(255,255,255,.06);
+  padding:11px 12px 12px;
+  color:#bbc7d7;
+  font-size:13px;
+}
+.qa-answer strong{display:block;color:#8f9bad;font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
+.qa-answer p{margin:0;line-height:1.55}
+
+.concept-map{
+  overflow-x:auto !important;
+  overflow-y:hidden !important;
+  overscroll-behavior-x:contain;
+  -webkit-overflow-scrolling:touch;
+}
+.concept-map-canvas{
+  width:auto !important;
+  max-width:none !important;
+  height:auto !important;
+  min-width:1080px !important;
+  margin:0 auto;
+}
+
+@media(max-width:850px){
+  .study-config{grid-template-columns:1fr}
+  .study-top-actions{align-items:stretch}
+  .download-menu{width:100%;justify-content:space-between}
+}
+@media(max-width:620px){
+  .concept-map-canvas{min-width:960px !important}
+  .download-menu{display:grid;grid-template-columns:auto repeat(3,1fr)}
+  .download-menu .ghost{width:100%}
+}
