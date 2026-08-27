@@ -20,8 +20,7 @@ const state = {
   deferredPrompt: null,
   recognitionLang: "es-UY",
   votes: { es: 0, en: 0 },
-  currentMap: null,
-  pendingAppReload: false
+  currentMap: null
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -383,10 +382,6 @@ function finish() {
   header("Sesión finalizada");
   updateInsights(true);
 
-  if (state.pendingAppReload) {
-    state.pendingAppReload = false;
-    setTimeout(() => window.location.reload(), 700);
-  }
 }
 
 function updateUI() {
@@ -1109,19 +1104,35 @@ window.addEventListener("pagehide", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  let refreshing = false;
+  let registrationRef = null;
+  let reloadingForUpdate = false;
+
+  function showUpdateButton(registration) {
+    registrationRef = registration;
+    const button = $("updateAppBtn");
+    if (!button) return;
+
+    if (registration?.waiting) {
+      button.classList.remove("hidden");
+      button.textContent = "Actualizar app";
+    } else {
+      button.classList.add("hidden");
+    }
+  }
+
+  async function checkForAppUpdate() {
+    if (!registrationRef) return;
+    try {
+      await registrationRef.update();
+      showUpdateButton(registrationRef);
+    } catch (error) {
+      console.warn("No se pudo comprobar la actualización:", error);
+    }
+  }
 
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (refreshing) return;
-    refreshing = true;
-
-    if (state.recording) {
-      state.pendingAppReload = true;
-      refreshing = false;
-      toast("Actualización lista. Se aplicará al finalizar.");
-      return;
-    }
-
+    if (reloadingForUpdate) return;
+    reloadingForUpdate = true;
     window.location.reload();
   });
 
@@ -1131,20 +1142,49 @@ if ("serviceWorker" in navigator) {
         updateViaCache: "none"
       });
 
-      await registration.update();
+      registrationRef = registration;
+      showUpdateButton(registration);
 
-      setInterval(() => {
-        registration.update().catch(() => {});
-      }, 15 * 60 * 1000);
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        if (!worker) return;
+
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) {
+            showUpdateButton(registration);
+            if (registration.waiting) toast("Hay una actualización disponible");
+          }
+        });
+      });
+
+      await checkForAppUpdate();
+
+      setInterval(checkForAppUpdate, 5 * 60 * 1000);
 
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
-          registration.update().catch(() => {});
+          checkForAppUpdate();
         }
       });
     } catch (error) {
-      console.warn("No se pudo actualizar el Service Worker:", error);
+      console.warn("No se pudo registrar el Service Worker:", error);
     }
+  });
+
+  $("updateAppBtn")?.addEventListener("click", () => {
+    if (state.recording) {
+      alert("Finalizá la grabación antes de actualizar la app para no cortar la sesión.");
+      return;
+    }
+
+    if (!registrationRef?.waiting) {
+      checkForAppUpdate();
+      return;
+    }
+
+    $("updateAppBtn").textContent = "Actualizando…";
+    $("updateAppBtn").disabled = true;
+    registrationRef.waiting.postMessage({ type: "SKIP_WAITING" });
   });
 }
 
