@@ -48,3 +48,25 @@
   .concept-map{padding:10px}
   .concept-map .classic-map-svg{min-width:820px}
 }
+
+.topbar-actions{display:flex;align-items:center;gap:8px}
+.update-app-btn{
+  border:0;
+  border-radius:999px;
+  padding:10px 15px;
+  background:linear-gradient(135deg,#8b5cf6,#6d4ce7);
+  color:#fff;
+  font-weight:850;
+  box-shadow:0 10px 28px rgba(124,92,255,.28);
+  cursor:pointer;
+  animation:updatePulse 2s ease-in-out infinite;
+}
+.update-app-btn:disabled{opacity:.7;cursor:wait;animation:none}
+@keyframes updatePulse{
+  0%,100%{box-shadow:0 10px 28px rgba(124,92,255,.24)}
+  50%{box-shadow:0 10px 34px rgba(124,92,255,.48)}
+}
+@media(max-width:560px){
+  .topbar-actions{flex-wrap:wrap;justify-content:flex-end}
+  .update-app-btn{padding:9px 12px;font-size:13px}
+}
