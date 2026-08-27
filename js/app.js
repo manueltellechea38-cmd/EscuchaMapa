@@ -20,7 +20,8 @@ const state = {
   deferredPrompt: null,
   recognitionLang: "es-UY",
   votes: { es: 0, en: 0 },
-  currentMap: null
+  currentMap: null,
+  pendingAppReload: false
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -381,6 +382,11 @@ function finish() {
   updateUI();
   header("Sesión finalizada");
   updateInsights(true);
+
+  if (state.pendingAppReload) {
+    state.pendingAppReload = false;
+    setTimeout(() => window.location.reload(), 700);
+  }
 }
 
 function updateUI() {
@@ -1046,7 +1052,43 @@ window.addEventListener("pagehide", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch(console.warn));
+  let refreshing = false;
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+
+    if (state.recording) {
+      state.pendingAppReload = true;
+      refreshing = false;
+      toast("Actualización lista. Se aplicará al finalizar.");
+      return;
+    }
+
+    window.location.reload();
+  });
+
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.register("./service-worker.js", {
+        updateViaCache: "none"
+      });
+
+      await registration.update();
+
+      setInterval(() => {
+        registration.update().catch(() => {});
+      }, 15 * 60 * 1000);
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          registration.update().catch(() => {});
+        }
+      });
+    } catch (error) {
+      console.warn("No se pudo actualizar el Service Worker:", error);
+    }
+  });
 }
 
 if (!window.isSecureContext) {
