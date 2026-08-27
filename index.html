@@ -1,263 +1,89 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1020" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="EscuchaMapa" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EscuchaMapa">
   <title>EscuchaMapa</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <audio id="keepAliveAudio" loop playsinline preload="auto" aria-hidden="true"></audio>
+<header class="topbar">
+  <div class="brand"><span class="logo">E</span><div><strong>EscuchaMapa</strong><small id="headerStatus">Listo para escuchar</small></div></div>
+  <button id="installBtn" class="ghost hidden">Instalar</button>
+</header>
 
-  <header class="app-header">
-    <div>
-      <p class="eyebrow">ESCUCHAR · LIMPIAR · ENTENDER</p>
-      <h1>EscuchaMapa</h1>
+<main class="shell">
+  <section class="recorder card">
+    <div class="recorder-main">
+      <button id="recordButton" class="record-button" aria-label="Grabar"><span></span></button>
+      <div>
+        <h1 id="recordTitle">Tocá para empezar</h1>
+        <p id="recordSubtitle">Grabá una clase o conversación y quedate con lo importante.</p>
+        <div class="meta"><span id="timer">00:00:00</span><span id="micState">Micrófono apagado</span></div>
+      </div>
     </div>
-    <div id="recordingBadge" class="recording-badge idle" aria-live="polite">
-      <span class="recording-dot"></span>
-      <span id="recordingBadgeText">Detenido</span>
+    <div class="meter"><div id="audioLevel"></div></div>
+
+    <div class="settings">
+      <label><span>Idioma</span><select id="languageSelect">
+        <option value="es-UY" selected>Español</option>
+        <option value="en-US">English</option>
+        <option value="bilingual">Español + English</option>
+      </select></label>
+      <label><span>Tema, si lo sabés</span><input id="topicInput" placeholder="Ej: Revolución Industrial"></label>
     </div>
-  </header>
 
-  <main class="app-shell">
-    <section class="hero card">
-      <div class="hero-copy">
-        <div>
-          <h2>Escuchá una clase o conversación y quedate con lo importante</h2>
-          <p>La app conserva una transcripción completa y, al mismo tiempo, crea una versión limpia centrada en el tema principal.</p>
-        </div>
-        <div id="backgroundState" class="background-pill">Primer plano</div>
+    <div class="actions">
+      <button id="pauseBtn" disabled>Pausar</button>
+      <button id="finishBtn" disabled>Finalizar</button>
+      <button id="undoBtn" disabled>Deshacer último</button>
+      <button id="newSessionBtn">Nueva sesión</button>
+    </div>
+    <p id="compatibilityNotice" class="notice hidden"></p>
+  </section>
+
+  <section class="grid">
+    <article class="card transcript-card">
+      <div class="head">
+        <div><span class="kicker">TEXTO</span><h2>Lo importante</h2></div>
+        <div class="head-actions"><button id="copyBtn" class="ghost">Copiar</button><button id="clearTextBtn" class="ghost danger">Borrar</button></div>
       </div>
+      <div id="cleanTranscript" class="transcript" contenteditable="true" spellcheck="true"><p class="placeholder">Todavía no hay nada transcrito.</p></div>
+      <div id="interimTranscript" class="interim"></div>
+      <div class="transcript-foot"><span id="qualityState">Reconocimiento del navegador</span><button id="toggleRawBtn" class="link-btn">Ver todo lo escuchado</button></div>
+      <div id="rawDrawer" class="raw-drawer hidden"><div id="rawTranscript"></div></div>
+    </article>
 
-      <div class="controls">
-        <button id="startBtn" class="btn primary">Iniciar escucha</button>
-        <button id="pauseBtn" class="btn" disabled>Pausar</button>
-        <button id="stopBtn" class="btn danger" disabled>Finalizar</button>
-      </div>
+    <aside class="card ideas-card">
+      <div class="head"><div><span class="kicker">ANÁLISIS</span><h2>Ideas</h2></div><button id="refreshInsightsBtn" class="ghost">Actualizar</button></div>
+      <div class="topic-box"><span>Tema detectado</span><strong id="detectedTopic">Todavía no hay suficiente texto</strong></div>
+      <h3>Conceptos clave</h3><div id="keywords" class="chips"></div>
+      <h3>Resumen</h3><div id="summary" class="summary">Todavía no hay suficiente texto.</div>
+    </aside>
+  </section>
 
-      <div class="status-grid">
-        <div>
-          <span class="status-label">Estado</span>
-          <strong id="statusText">Listo</strong>
-        </div>
-        <div>
-          <span class="status-label">Tiempo</span>
-          <strong id="timer">00:00:00</strong>
-        </div>
-        <div>
-          <span class="status-label">Idioma</span>
-          <select id="languageSelect">
-            <option value="es-UY" selected>Español (Uruguay)</option>
-            <option value="en-US">English (US)</option>
-            <option value="bilingual">Español + English</option>
-          </select>
-        </div>
-        <div>
-          <span class="status-label">Filtro del tema</span>
-          <select id="filterStrength">
-            <option value="soft">Suave</option>
-            <option value="normal" selected>Normal</option>
-            <option value="strict">Estricto</option>
-          </select>
-        </div>
-      </div>
+  <section class="card">
+    <div class="head"><div><span class="kicker">MAPA CONCEPTUAL</span><h2>Cómo se conecta el tema</h2></div><button id="rebuildMapBtn" class="ghost">Regenerar</button></div>
+    <div id="conceptMap" class="concept-map"><div class="empty-map"><strong>El mapa aparecerá cuando haya suficiente contenido.</strong><span>Usa ideas y frases, no solamente palabras sueltas.</span></div></div>
+  </section>
 
-      <div class="topic-row">
-        <div>
-          <label for="topicInput" class="status-label">Tema central (opcional)</label>
-          <input id="topicInput" placeholder="Ej: Revolución Industrial, ciberseguridad..." />
-        </div>
-        <button id="detectTopicBtn" class="btn">Detectar tema</button>
-        <button id="lockTopicBtn" class="btn">Fijar tema</button>
-      </div>
-      <p id="topicStatus" class="topic-status">Tema: se detectará automáticamente a partir de lo que escuches.</p>
+  <section class="card">
+    <div class="head"><div><span class="kicker">SESIONES</span><h2>Historial</h2></div><button id="clearHistoryBtn" class="ghost danger">Borrar historial</button></div>
+    <div id="historyList" class="history-list"></div>
+  </section>
+</main>
 
-      <div class="audio-meter" aria-hidden="true"><div id="audioLevel"></div></div>
+<footer class="footer">
+  <span>Los textos se guardan en este dispositivo.</span>
+  <span>En iPhone una PWA no puede garantizar el micrófono con la pantalla bloqueada.</span>
+</footer>
 
-      <div class="recording-options">
-        <label class="switch-line">
-          <input id="resilientMode" type="checkbox" checked />
-          <span>Modo resistente a bloqueo/segundo plano</span>
-        </label>
-        <label class="switch-line">
-          <input id="autoClean" type="checkbox" checked />
-          <span>Filtrar automáticamente frases fuera del tema</span>
-        </label>
-      </div>
-
-      <p id="compatibilityNotice" class="notice hidden"></p>
-    </section>
-
-    <nav class="tabs" aria-label="Secciones">
-      <button class="tab active" data-tab="clean">Texto limpio</button>
-      <button class="tab" data-tab="raw">Texto completo</button>
-      <button class="tab" data-tab="map">Mapa conceptual</button>
-      <button class="tab" data-tab="study">Estudio</button>
-      <button class="tab" data-tab="notes">Notas</button>
-      <button class="tab" data-tab="sessions">Sesiones</button>
-    </nav>
-
-    <section id="clean" class="tab-panel active">
-      <div class="two-col">
-        <article class="card">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">VERSIÓN PRINCIPAL</p>
-              <h2>Conversación central</h2>
-            </div>
-            <div class="inline-actions">
-              <button id="copyCleanBtn" class="btn small">Copiar</button>
-              <button id="rebuildCleanBtn" class="btn small">Reclasificar</button>
-            </div>
-          </div>
-
-          <div id="cleanOutput" class="transcript-output clean-output" contenteditable="true" spellcheck="true">
-            <p class="placeholder">Acá aparecerá solamente lo que la app considere parte del tema principal...</p>
-          </div>
-          <div class="clean-stats">
-            <span id="acceptedCount">0 fragmentos útiles</span>
-            <span id="ignoredCount">0 ignorados</span>
-          </div>
-        </article>
-
-        <aside class="card">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">ANÁLISIS</p>
-              <h2>Ideas principales</h2>
-            </div>
-            <button id="analyzeBtn" class="btn small">Actualizar</button>
-          </div>
-          <div id="keywords" class="chips"></div>
-          <hr />
-          <h3>Buscar dentro del tema</h3>
-          <div class="search-row">
-            <input id="searchInput" type="search" placeholder="Ej: energía, seguridad..." />
-            <button id="searchBtn" class="btn small">Buscar</button>
-          </div>
-          <div id="searchResults" class="search-results"></div>
-        </aside>
-      </div>
-    </section>
-
-    <section id="raw" class="tab-panel">
-      <article class="card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">REGISTRO COMPLETO</p>
-            <h2>Todo lo escuchado</h2>
-          </div>
-          <div class="inline-actions">
-            <button id="copyRawBtn" class="btn small">Copiar</button>
-            <button id="clearAllBtn" class="btn small danger-outline">Limpiar todo</button>
-          </div>
-        </div>
-        <div id="rawOutput" class="transcript-output" contenteditable="true" spellcheck="true">
-          <p class="placeholder">La transcripción completa aparecerá acá...</p>
-        </div>
-        <div id="interimOutput" class="interim"></div>
-        <p class="muted small-text">El texto completo nunca se elimina por el filtro. Si una frase se clasifica como secundaria, queda guardada acá.</p>
-      </article>
-    </section>
-
-    <section id="map" class="tab-panel">
-      <article class="card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">RELACIONES</p>
-            <h2>Mapa conceptual</h2>
-          </div>
-          <div class="inline-actions">
-            <input id="mapTitle" value="Tema principal" aria-label="Tema principal" />
-            <button id="generateMapBtn" class="btn small">Generar mapa</button>
-          </div>
-        </div>
-        <p class="muted">Se construye usando únicamente el texto clasificado como central.</p>
-        <div id="conceptMap" class="concept-map">
-          <div class="empty-state">Necesito texto para construir el mapa.</div>
-        </div>
-      </article>
-    </section>
-
-    <section id="study" class="tab-panel">
-      <div class="two-col">
-        <article class="card">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">REPASO</p>
-              <h2>Resumen automático</h2>
-            </div>
-            <button id="summaryBtn" class="btn small">Crear resumen</button>
-          </div>
-          <div id="summaryOutput" class="prose-box">Todavía no hay resumen.</div>
-        </article>
-
-        <article class="card">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">AUTOEVALUACIÓN</p>
-              <h2>Preguntas para estudiar</h2>
-            </div>
-            <button id="questionsBtn" class="btn small">Generar</button>
-          </div>
-          <div id="questionsOutput" class="prose-box">Todavía no hay preguntas.</div>
-        </article>
-      </div>
-
-      <article class="card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">SELECCIÓN</p>
-            <h2>Fragmentos importantes</h2>
-          </div>
-          <button id="saveSelectionBtn" class="btn small">Guardar texto seleccionado</button>
-        </div>
-        <div id="highlightsOutput" class="highlight-list"></div>
-      </article>
-    </section>
-
-    <section id="notes" class="tab-panel">
-      <article class="card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">APUNTES</p>
-            <h2>Notas de la sesión</h2>
-          </div>
-          <button id="saveNotesBtn" class="btn small">Guardar notas</button>
-        </div>
-        <textarea id="notesArea" rows="14" placeholder="Escribí tus apuntes, dudas, conclusiones o tareas..."></textarea>
-      </article>
-    </section>
-
-    <section id="sessions" class="tab-panel">
-      <article class="card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">HISTORIAL LOCAL</p>
-            <h2>Sesiones guardadas</h2>
-          </div>
-          <div class="inline-actions">
-            <button id="exportTxtBtn" class="btn small">Exportar TXT</button>
-            <button id="exportJsonBtn" class="btn small">Exportar JSON</button>
-          </div>
-        </div>
-        <div id="sessionsList" class="session-list"></div>
-      </article>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <span>EscuchaMapa · datos guardados localmente</span>
-    <button id="installBtn" class="btn small hidden">Instalar app</button>
-  </footer>
-
-  <script src="js/app.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
