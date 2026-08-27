@@ -543,28 +543,122 @@ function buildMapData(units, topic) {
   return {topic, branches};
 }
 
+function shortenMapEvidence(text, maxWords=18) {
+  const cleanText = String(text || "").trim();
+  if (!cleanText) return "";
+  const parts = cleanText.split(/\s+/);
+  if (parts.length <= maxWords) return cleanText;
+  return parts.slice(0, maxWords).join(" ") + "…";
+}
+
+function svgWrappedText(text, x, y, maxWidth, lineHeight, className, maxLines=3) {
+  const rawWords = String(text || "").split(/\s+/).filter(Boolean);
+  const avgCharWidth = className === "map-svg-topic" ? 10.5 : className === "map-svg-concept" ? 8.5 : 7;
+  const lines = [];
+  let current = "";
+
+  for (const word of rawWords) {
+    const candidate = current ? current + " " + word : word;
+    if (candidate.length * avgCharWidth > maxWidth && current) {
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines - 1) break;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current && lines.length < maxLines) lines.push(current);
+
+  const usedWords = lines.join(" ").split(/\s+/).filter(Boolean).length;
+  if (usedWords < rawWords.length && lines.length) {
+    lines[lines.length - 1] = lines[lines.length - 1].replace(/[.…]*$/, "") + "…";
+  }
+
+  const totalHeight = Math.max(0, (lines.length - 1) * lineHeight);
+  const startY = y - totalHeight / 2;
+
+  return '<text x="' + x + '" y="' + startY + '" text-anchor="middle" class="' + className + '">'
+    + lines.map((line, index) =>
+        '<tspan x="' + x + '" dy="' + (index === 0 ? 0 : lineHeight) + '">' + esc(line) + '</tspan>'
+      ).join("")
+    + '</text>';
+}
+
 function renderConceptMap(mapData) {
   const box = $("conceptMap");
   state.currentMap = mapData;
 
-  if (!mapData || !mapData.branches.length) {
+  if (!mapData || !mapData.branches?.length) {
     box.innerHTML =
       '<div class="empty-map"><strong>Necesito un poco más de contenido para generar el mapa.</strong>'
       + '<span>Probá grabando algunos fragmentos más o escribiendo el tema arriba.</span></div>';
     return;
   }
 
-  box.innerHTML =
-    '<div class="map-root"><div class="map-center">' + esc(mapData.topic) + '</div>'
-    + '<div class="map-branches">'
-    + mapData.branches.map(branch =>
-        '<div class="map-branch"><div class="branch-title">' + esc(branch.word) + '</div>'
-        + '<div class="branch-evidence">' + esc(branch.evidence) + '</div>'
-        + '<div class="branch-links">'
-        + branch.links.map(x => '<span>' + esc(x) + '</span>').join("")
-        + '</div></div>'
-      ).join("")
-    + '</div></div>';
+  const branches = mapData.branches.slice(0, 5);
+  const count = branches.length;
+  const width = Math.max(980, count * 230);
+  const height = 620;
+  const centerX = width / 2;
+
+  const topicY = 55;
+  const topicW = 310;
+  const topicH = 82;
+
+  const trunkY = 180;
+  const conceptY = 225;
+  const conceptW = 185;
+  const conceptH = 66;
+
+  const explanationY = 390;
+  const explanationW = 210;
+  const explanationH = 125;
+
+  const sideMargin = 110;
+  const branchXs = count === 1
+    ? [centerX]
+    : Array.from({length: count}, (_, i) =>
+        sideMargin + i * ((width - sideMargin * 2) / (count - 1))
+      );
+
+  let svg = '<svg class="classic-map-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Mapa conceptual">';
+  svg += '<defs>'
+    + '<marker id="mapArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">'
+    + '<path d="M0,0 L0,6 L9,3 z" fill="#64748b"></path>'
+    + '</marker>'
+    + '</defs>';
+
+  svg += '<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"></rect>';
+
+  svg += '<rect x="' + (centerX - topicW / 2) + '" y="' + topicY + '" width="' + topicW + '" height="' + topicH + '" rx="22" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"></rect>';
+  svg += svgWrappedText(mapData.topic, centerX, topicY + topicH / 2 + 2, topicW - 34, 24, "map-svg-topic", 3);
+
+  svg += '<line x1="' + centerX + '" y1="' + (topicY + topicH) + '" x2="' + centerX + '" y2="' + trunkY + '" class="map-svg-line"></line>';
+  svg += '<line x1="' + branchXs[0] + '" y1="' + trunkY + '" x2="' + branchXs[branchXs.length - 1] + '" y2="' + trunkY + '" class="map-svg-line"></line>';
+
+  branches.forEach((branch, index) => {
+    const x = branchXs[index];
+    const evidence = shortenMapEvidence(branch.evidence, 18);
+
+    svg += '<line x1="' + x + '" y1="' + trunkY + '" x2="' + x + '" y2="' + (conceptY - 10) + '" class="map-svg-line" marker-end="url(#mapArrow)"></line>';
+
+    svg += '<rect x="' + (x - conceptW / 2) + '" y="' + conceptY + '" width="' + conceptW + '" height="' + conceptH + '" rx="17" fill="#eef2ff" stroke="#6366f1" stroke-width="2.5"></rect>';
+    svg += svgWrappedText(branch.word, x, conceptY + conceptH / 2 + 2, conceptW - 24, 19, "map-svg-concept", 2);
+
+    svg += '<line x1="' + x + '" y1="' + (conceptY + conceptH) + '" x2="' + x + '" y2="' + (explanationY - 10) + '" class="map-svg-subline" marker-end="url(#mapArrow)"></line>';
+
+    svg += '<rect x="' + (x - explanationW / 2) + '" y="' + explanationY + '" width="' + explanationW + '" height="' + explanationH + '" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"></rect>';
+    svg += svgWrappedText(evidence, x, explanationY + 48, explanationW - 28, 19, "map-svg-explanation", 4);
+
+    if (branch.links?.length) {
+      const related = "Relacionado: " + branch.links.slice(0, 3).join(" · ");
+      svg += svgWrappedText(related, x, explanationY + explanationH - 19, explanationW - 24, 16, "map-svg-related", 2);
+    }
+  });
+
+  svg += '</svg>';
+  box.innerHTML = svg;
 }
 
 function updateInsights(showFeedback=false) {
@@ -887,89 +981,52 @@ function exportMapPng() {
   updateInsights();
 
   const data = state.currentMap;
-  if (!data || !data.branches?.length) {
+  const svgElement = $("conceptMap").querySelector("svg.classic-map-svg");
+
+  if (!data || !data.branches?.length || !svgElement) {
     alert("Todavía no hay suficiente contenido para descargar un mapa.");
     return;
   }
 
-  const width = 1800;
-  const branchHeight = 150;
-  const gap = 28;
-  const top = 150;
-  const height = Math.max(1000, top + data.branches.length * (branchHeight + gap) + 100);
+  const clone = svgElement.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
 
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  const serializer = new XMLSerializer();
+  const svgString = serializer.serializeToString(clone);
+  const svgBlob = new Blob([svgString], {type: "image/svg+xml;charset=utf-8"});
+  const svgUrl = URL.createObjectURL(svgBlob);
+  const image = new Image();
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0,0,width,height);
+  image.onload = () => {
+    const viewBox = svgElement.viewBox.baseVal;
+    const scale = 2.5;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewBox.width * scale);
+    canvas.height = Math.round(viewBox.height * scale);
 
-  ctx.fillStyle = "#111827";
-  ctx.font = "700 48px Arial";
-  ctx.fillText("EscuchaMapa - Mapa conceptual", 90, 78);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = "#6b7280";
-  ctx.font = "28px Arial";
-  ctx.fillText(new Date().toLocaleString(), 90, 118);
+    canvas.toBlob(blob => {
+      URL.revokeObjectURL(svgUrl);
+      if (!blob) {
+        alert("No pude generar la imagen del mapa.");
+        return;
+      }
 
-  const centerX = 100;
-  const centerY = top + Math.max(0, ((data.branches.length - 1) * (branchHeight + gap)) / 2);
-  const centerW = 390;
-  const centerH = 180;
+      downloadBlob(blob, safeFilename(data.topic || "mapa-conceptual", "png"));
+      toast("Mapa PNG descargado");
+    }, "image/png", 1);
+  };
 
-  ctx.fillStyle = "#ede9fe";
-  ctx.strokeStyle = "#7c3aed";
-  ctx.lineWidth = 4;
-  roundRect(ctx, centerX, centerY, centerW, centerH, 28);
-  ctx.fill();
-  ctx.stroke();
+  image.onerror = () => {
+    URL.revokeObjectURL(svgUrl);
+    alert("No pude generar la imagen del mapa.");
+  };
 
-  ctx.fillStyle = "#4c1d95";
-  ctx.font = "700 32px Arial";
-  wrapCanvasText(ctx, data.topic, centerX + 28, centerY + 62, centerW - 56, 40, 3);
-
-  const branchX = 690;
-  const branchW = 1000;
-
-  data.branches.forEach((branch,index) => {
-    const y = top + index * (branchHeight + gap);
-
-    ctx.strokeStyle = "#94a3b8";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(centerX + centerW, centerY + centerH/2);
-    ctx.lineTo(branchX - 40, y + branchHeight/2);
-    ctx.stroke();
-
-    ctx.fillStyle = "#f8fafc";
-    ctx.strokeStyle = "#cbd5e1";
-    ctx.lineWidth = 3;
-    roundRect(ctx, branchX, y, branchW, branchHeight, 24);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#312e81";
-    ctx.font = "700 30px Arial";
-    ctx.fillText(branch.word, branchX + 30, y + 42);
-
-    ctx.fillStyle = "#334155";
-    ctx.font = "24px Arial";
-    wrapCanvasText(ctx, branch.evidence, branchX + 30, y + 78, branchW - 60, 30, 2);
-
-    if (branch.links?.length) {
-      ctx.fillStyle = "#64748b";
-      ctx.font = "20px Arial";
-      ctx.fillText("Relacionado: " + branch.links.join(" · "), branchX + 30, y + branchHeight - 20);
-    }
-  });
-
-  canvas.toBlob(blob => {
-    if (!blob) return;
-    downloadBlob(blob, safeFilename(data.topic || "mapa-conceptual", "png"));
-    toast("Mapa PNG descargado");
-  }, "image/png", 1);
+  image.src = svgUrl;
 }
 
 function toast(message) {
