@@ -24,7 +24,11 @@ const state = {
   currentMapCanvas: null,
   translatedMap: null,
   translatedStudy: null,
-  translationSource: ""
+  translatedSummary: "",
+  translationSource: "",
+  showingTranslation: false,
+  materialSources: [],
+  analysisMode: "listen"
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -78,6 +82,7 @@ function detectLanguage(text) {
 }
 
 
+
 function detectContentLanguage(text) {
   const tokens = words(text, true);
   if (!tokens.length) return "unknown";
@@ -90,9 +95,11 @@ function detectContentLanguage(text) {
     if (EN.has(token)) en++;
   }
 
-  const selected = $("languageSelect")?.value;
-  if (selected === "en-US") en += 3;
-  if (selected === "es-UY") es += 2;
+  if (state.analysisMode === "listen") {
+    const selected = $("languageSelect")?.value;
+    if (selected === "en-US") en += 3;
+    if (selected === "es-UY") es += 2;
+  }
 
   if (en >= es + 2) return "en-US";
   if (es >= en + 2) return "es-UY";
@@ -102,7 +109,7 @@ function detectContentLanguage(text) {
 function languageLabel(code) {
   if (code === "en-US") return "English";
   if (code === "es-UY") return "Español";
-  if (code === "mixed") return "Español + English";
+  if (code === "mixed") return "Mixto";
   return "Sin detectar";
 }
 
@@ -111,7 +118,7 @@ function buildStudyData(mapData, languageCode) {
 
   const isEnglish = languageCode === "en-US";
   const points = mapData.branches.map(branch => {
-    let text = branch.word + ": " + shortenMapEvidence(branch.evidence, 22);
+    let text = branch.word + ": " + shortenMapEvidence(branch.evidence, 24);
     if (branch.links?.length) {
       text += isEnglish
         ? " Related: " + branch.links.slice(0, 3).join(", ") + "."
@@ -120,14 +127,11 @@ function buildStudyData(mapData, languageCode) {
     return text;
   });
 
-  const questions = [];
-  for (const branch of mapData.branches.slice(0, 4)) {
-    questions.push(
-      isEnglish
-        ? "How would you explain " + branch.word + " in your own words?"
-        : "¿Cómo explicarías " + branch.word + " con tus propias palabras?"
-    );
-  }
+  const questions = mapData.branches.slice(0, 4).map(branch =>
+    isEnglish
+      ? "How would you explain " + branch.word + " in your own words?"
+      : "¿Cómo explicarías " + branch.word + " con tus propias palabras?"
+  );
 
   if (mapData.branches.length >= 2) {
     const a = mapData.branches[0].word;
@@ -159,45 +163,128 @@ function updateLanguageTools(fullText) {
   const detected = detectContentLanguage(fullText);
   $("detectedLanguage").textContent = languageLabel(detected);
 
-  const showTranslation = detected === "en-US";
-  $("languageTools").classList.toggle("hidden", !showTranslation);
+  if (detected === "en-US") $("translationTarget").value = "es";
+  if (detected === "es-UY") $("translationTarget").value = "en";
 
-  const signature = norm(fullText).slice(0, 1200);
+  const signature = norm(fullText).slice(0, 1600);
   if (state.translationSource && state.translationSource !== signature) {
     state.translatedMap = null;
     state.translatedStudy = null;
+    state.translatedSummary = "";
     state.translationSource = "";
-    $("translationPanel").classList.add("hidden");
+    state.showingTranslation = false;
+    $("showOriginalMapBtn").classList.add("hidden");
+    $("translationStatus").textContent = "La traducción se muestra dentro de EscuchaMapa.";
   }
 
   return detected;
 }
 
-function translatedStudyHtml(result) {
-  let html = '<div class="translated-section"><span>Resumen</span><p>' + esc(result.summary || "") + '</p></div>';
+function splitTranslationText(text, maxLength=1500) {
+  const source = String(text || "").trim();
+  if (!source) return [];
 
-  if (result.study?.points?.length) {
-    html += '<div class="translated-section"><span>Puntos clave</span><ol>'
-      + result.study.points.map(item => "<li>" + esc(item) + "</li>").join("")
-      + "</ol></div>";
+  const sentences = punctuationSentences(source);
+  const chunks = [];
+  let current = "";
+
+  for (const sentence of sentences.length ? sentences : [source]) {
+    const candidate = current ? current + " " + sentence : sentence;
+    if (candidate.length > maxLength && current) {
+      chunks.push(current);
+      current = sentence;
+    } else {
+      current = candidate;
+    }
   }
 
-  if (result.study?.questions?.length) {
-    html += '<div class="translated-section"><span>Preguntas</span><ol>'
-      + result.study.questions.map(item => "<li>" + esc(item) + "</li>").join("")
-      + "</ol></div>";
+  if (current) chunks.push(current);
+
+  if (chunks.some(chunk => chunk.length > maxLength)) {
+    return source.match(new RegExp(".{1," + maxLength + "}", "gs")) || [source];
   }
 
-  return html;
+  return chunks;
 }
 
-async function translateWithBrowser(text, translator) {
-  if (!text) return "";
-  return await translator.translate(text);
+async function createTranslationEngine(sourceCode, targetCode) {
+  if (
+    sourceCode !== "auto" &&
+    globalThis.Translator?.create
+  ) {
+    try {
+      const translator = await globalThis.Translator.create({
+        sourceLanguage: sourceCode,
+        targetLanguage: targetCode
+      });
+
+      return {
+        type: "browser",
+        translate: async text => {
+          const chunks = splitTranslationText(text);
+          const translated = [];
+          for (const chunk of chunks) translated.push(await translator.translate(chunk));
+          return translated.join(" ");
+        },
+        destroy: () => translator.destroy?.()
+      };
+    } catch (error) {
+      console.warn("Traductor integrado no disponible:", error);
+    }
+  }
+
+  const endpoints = [
+    "https://libretranslate.com/translate",
+    "https://es.libretranslate.com/translate"
+  ];
+
+  return {
+    type: "online",
+    translate: async text => {
+      const chunks = splitTranslationText(text);
+      const translatedChunks = [];
+
+      for (const chunk of chunks) {
+        let translated = null;
+        let lastError = null;
+
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({
+                q: chunk,
+                source: sourceCode,
+                target: targetCode,
+                format: "text",
+                alternatives: 1,
+                api_key: ""
+              })
+            });
+
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const data = await response.json();
+            if (!data.translatedText) throw new Error("Respuesta sin traducción");
+            translated = data.translatedText;
+            break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        if (!translated) throw lastError || new Error("No se pudo traducir");
+        translatedChunks.push(translated);
+      }
+
+      return translatedChunks.join(" ");
+    },
+    destroy: () => {}
+  };
 }
 
 async function translateGeneratedContent() {
-  const units = transcriptUnits();
+  const units = analysisUnits();
   const fullText = units.join(" ");
   if (!fullText) {
     alert("Todavía no hay contenido para traducir.");
@@ -205,128 +292,114 @@ async function translateGeneratedContent() {
   }
 
   const detected = detectContentLanguage(fullText);
-  if (detected !== "en-US") {
-    toast("La traducción aparece cuando el contenido está en inglés");
+  const sourceCode = detected === "en-US" ? "en" : detected === "es-UY" ? "es" : "auto";
+  const targetCode = $("translationTarget").value;
+
+  if (sourceCode !== "auto" && sourceCode === targetCode) {
+    toast("Elegí un idioma distinto al original");
     return;
   }
 
-  const keywords = keywordData(fullText, 9);
-  const topic = $("topicInput").value.trim()
-    || keywords.slice(0, 3).map(item => item.word).join(" · ")
-    || "Main topic";
-
-  const originalMap = buildMapData(units, topic);
+  const originalMap = state.currentMap || buildMapData(units, $("detectedTopic").textContent || "Tema principal");
   const originalSummary = createSummary(units);
-  const originalStudy = buildStudyData(originalMap, "en-US");
+  const originalStudy = buildStudyData(originalMap, detected);
+
+  if (!originalMap?.branches?.length) {
+    alert("Necesito un poco más de contenido antes de traducir los resultados.");
+    return;
+  }
 
   const button = $("translateGeneratedBtn");
-  const oldText = button.textContent;
+  const oldLabel = button.textContent;
   button.disabled = true;
   button.textContent = "Traduciendo…";
+  $("translationStatus").textContent = "Traduciendo resumen, mapa y material de estudio…";
+
+  let engine = null;
 
   try {
-    if (globalThis.Translator?.create) {
-      // Create is called directly from the click interaction because supporting
-      // browsers require user activation to create the translator.
-      const translatorPromise = globalThis.Translator.create({
-        sourceLanguage: "en",
-        targetLanguage: "es"
+    engine = await createTranslationEngine(sourceCode, targetCode);
+
+    const translatedMap = {
+      topic: await engine.translate(originalMap.topic),
+      branches: []
+    };
+
+    for (const branch of originalMap.branches) {
+      translatedMap.branches.push({
+        word: await engine.translate(branch.word),
+        evidence: await engine.translate(branch.evidence),
+        secondaryEvidence: branch.secondaryEvidence
+          ? await engine.translate(branch.secondaryEvidence)
+          : "",
+        links: branch.links?.length
+          ? await Promise.all(branch.links.map(link => engine.translate(link)))
+          : []
       });
-
-      const translator = await translatorPromise;
-
-      const translatedMap = originalMap ? {
-        topic: await translateWithBrowser(originalMap.topic, translator),
-        branches: []
-      } : null;
-
-      if (originalMap) {
-        for (const branch of originalMap.branches) {
-          translatedMap.branches.push({
-            word: await translateWithBrowser(branch.word, translator),
-            evidence: await translateWithBrowser(branch.evidence, translator),
-            secondaryEvidence: branch.secondaryEvidence
-              ? await translateWithBrowser(branch.secondaryEvidence, translator)
-              : "",
-            links: branch.links?.length
-              ? await Promise.all(branch.links.map(link => translateWithBrowser(link, translator)))
-              : []
-          });
-        }
-      }
-
-      const translatedStudy = {
-        points: await Promise.all(originalStudy.points.map(item => translateWithBrowser(item, translator))),
-        questions: await Promise.all(originalStudy.questions.map(item => translateWithBrowser(item, translator)))
-      };
-
-      const result = {
-        summary: await translateWithBrowser(originalSummary, translator),
-        map: translatedMap,
-        study: translatedStudy
-      };
-
-      state.translatedMap = result.map;
-      state.translatedStudy = result.study;
-      state.translationSource = norm(fullText).slice(0, 1200);
-
-      $("translationOutput").innerHTML = translatedStudyHtml(result);
-      $("translationPanel").classList.remove("hidden");
-      toast("Traducción lista");
-      translator.destroy?.();
-      return;
     }
 
-    // iPhone/Safari and other browsers without the built-in Translator API:
-    // send only the generated study material, not the whole raw transcript.
-    const compactText = [
-      "SUMMARY",
-      originalSummary,
-      "",
-      "CONCEPT MAP",
-      originalMap?.topic || topic,
-      ...(originalMap?.branches || []).map(branch =>
-        branch.word + ": " + shortenMapEvidence(branch.evidence, 18)
-      ),
-      "",
-      "STUDY QUESTIONS",
-      ...originalStudy.questions
-    ].join("\n");
+    const translatedStudy = {
+      points: await Promise.all(originalStudy.points.map(item => engine.translate(item))),
+      questions: await Promise.all(originalStudy.questions.map(item => engine.translate(item)))
+    };
 
-    try {
-      await navigator.clipboard.writeText(compactText);
-    } catch {}
+    const translatedSummary = await engine.translate(originalSummary);
 
-    const translateUrl = "https://translate.google.com/?sl=en&tl=es&text="
-      + encodeURIComponent(compactText.slice(0, 1800))
-      + "&op=translate";
+    state.translatedMap = translatedMap;
+    state.translatedStudy = translatedStudy;
+    state.translatedSummary = translatedSummary;
+    state.translationSource = norm(fullText).slice(0, 1600);
+    state.showingTranslation = true;
 
-    window.open(translateUrl, "_blank", "noopener");
-    toast("Abrí el traductor con el material generado");
+    $("detectedTopic").textContent = translatedMap.topic;
+    $("summary").textContent = translatedSummary;
+    $("keywords").innerHTML = translatedMap.branches
+      .map(branch => '<span class="chip">' + esc(branch.word) + "</span>")
+      .join("");
+
+    renderConceptMap(translatedMap);
+    renderStudy(translatedStudy);
+
+    $("showOriginalMapBtn").classList.remove("hidden");
+    $("translationStatus").textContent =
+      engine.type === "browser"
+        ? "Traducido dentro del dispositivo."
+        : "Traducido dentro de la app usando un servicio online.";
+    toast("Resultados traducidos");
   } catch (error) {
     console.warn("Traducción:", error);
-    const compact = [originalSummary, ...originalStudy.points, ...originalStudy.questions].join("\n\n");
-    try { await navigator.clipboard.writeText(compact); } catch {}
-    window.open("https://translate.google.com/?sl=en&tl=es&op=translate", "_blank", "noopener");
-    toast("Copié el material y abrí el traductor");
+    $("translationStatus").textContent =
+      "No pude completar la traducción ahora. Tus resultados originales siguen intactos.";
+    alert("No pude traducir dentro de la app en este momento. Probá nuevamente con conexión a internet.");
   } finally {
+    engine?.destroy?.();
     button.disabled = false;
-    button.textContent = oldText;
+    button.textContent = oldLabel;
   }
 }
 
-function copyStudyMaterial() {
-  const points = $("studyPoints").innerText.trim();
-  const questions = $("studyQuestions").innerText.trim();
+function showOriginalAnalysis() {
+  state.showingTranslation = false;
+  $("showOriginalMapBtn").classList.add("hidden");
+  updateInsights();
+  $("translationStatus").textContent = "Mostrando los resultados originales.";
+}
 
+function copyStudyMaterial() {
   const content = [
     "ESCUCHAMAPA - MODO ESTUDIO",
     "",
+    "TEMA",
+    $("detectedTopic").textContent,
+    "",
+    "RESUMEN",
+    $("summary").textContent,
+    "",
     "PUNTOS CLAVE",
-    points,
+    $("studyPoints").innerText.trim(),
     "",
     "PREGUNTAS PARA REPASAR",
-    questions
+    $("studyQuestions").innerText.trim()
   ].join("\n");
 
   navigator.clipboard.writeText(content)
@@ -371,6 +444,62 @@ function transcriptUnits() {
   return fallback;
 }
 
+
+function textToUnits(text) {
+  const cleanText = String(text || "").replace(/\r/g, "\n").trim();
+  if (!cleanText) return [];
+
+  const paragraphs = cleanText
+    .split(/\n{2,}|\n(?=[A-ZÁÉÍÓÚÑ0-9])/)
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  const units = [];
+  for (const paragraph of paragraphs) {
+    if (words(paragraph).length <= 38) {
+      units.push(paragraph);
+      continue;
+    }
+
+    const sentences = punctuationSentences(paragraph).filter(sentence => words(sentence).length >= 3);
+    if (sentences.length >= 2) {
+      units.push(...sentences);
+      continue;
+    }
+
+    const tokens = paragraph.split(/\s+/);
+    for (let i = 0; i < tokens.length; i += 28) {
+      const chunk = tokens.slice(i, i + 28).join(" ").trim();
+      if (chunk) units.push(chunk);
+    }
+  }
+
+  return units;
+}
+
+function analysisUnits() {
+  if (state.analysisMode === "material") {
+    return state.materialSources
+      .filter(source => source.enabled !== false)
+      .flatMap(source => textToUnits(source.text));
+  }
+
+  return transcriptUnits();
+}
+
+function analysisText() {
+  return analysisUnits().join(" ");
+}
+
+function analysisSourceName() {
+  if (state.analysisMode === "material") {
+    const enabled = state.materialSources.filter(source => source.enabled !== false);
+    if (!enabled.length) return "Material importado";
+    return enabled.length === 1 ? enabled[0].name : enabled.length + " fuentes combinadas";
+  }
+  return "Grabación / transcripción";
+}
+
 function renderTranscriptFragments(fragments) {
   const box = $("cleanTranscript");
   box.innerHTML = "";
@@ -413,6 +542,8 @@ function audioSession() {
 
 async function start() {
   try {
+    state.analysisMode = "listen";
+    state.showingTranslation = false;
     audioSession();
     state.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -1184,10 +1315,12 @@ function renderConceptMap(mapData) {
 }
 
 function updateInsights(showFeedback=false) {
-  const units = transcriptUnits();
+  const units = analysisUnits();
   const fullText = units.join(" ");
   const keywords = keywordData(fullText, 9);
-  const manual = $("topicInput").value.trim();
+  const manual = state.analysisMode === "listen" ? $("topicInput").value.trim() : "";
+
+  $("analysisSourceLabel").textContent = analysisSourceName();
 
   $("keywords").innerHTML = keywords.length
     ? keywords.map(item => '<span class="chip">' + esc(item.word) + '</span>').join("")
@@ -1202,6 +1335,9 @@ function updateInsights(showFeedback=false) {
 
   const detectedLanguage = updateLanguageTools(fullText);
   renderStudy(buildStudyData(mapData, detectedLanguage));
+
+  state.showingTranslation = false;
+  $("showOriginalMapBtn").classList.add("hidden");
 
   if (showFeedback) toast("Análisis actualizado");
 }
@@ -1336,6 +1472,8 @@ function renderHistory() {
 
 function openHistory(id) {
   if (state.recording) return;
+  state.analysisMode = "listen";
+  state.showingTranslation = false;
 
   const session = history().find(x => x.id === id);
   if (!session) return;
@@ -1368,6 +1506,260 @@ function clearHistory() {
   if (!confirm("¿Eliminar todo el historial?")) return;
   localStorage.removeItem("escuchamapa-v3-history");
   renderHistory();
+}
+
+
+const MATERIAL_DB_NAME = "escuchamapa-materials-v1";
+const MATERIAL_STORE = "sources";
+
+function openMaterialDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(MATERIAL_DB_NAME, 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(MATERIAL_STORE)) {
+        db.createObjectStore(MATERIAL_STORE, {keyPath:"id"});
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function persistMaterialSources() {
+  try {
+    const db = await openMaterialDb();
+    const tx = db.transaction(MATERIAL_STORE, "readwrite");
+    const store = tx.objectStore(MATERIAL_STORE);
+    store.clear();
+    state.materialSources.forEach(source => store.put(source));
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  } catch (error) {
+    console.warn("No pude guardar el material:", error);
+  }
+}
+
+async function restoreMaterialSources() {
+  try {
+    const db = await openMaterialDb();
+    const tx = db.transaction(MATERIAL_STORE, "readonly");
+    const request = tx.objectStore(MATERIAL_STORE).getAll();
+    const sources = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    state.materialSources = sources;
+    renderMaterialSources();
+  } catch (error) {
+    console.warn("No pude recuperar el material:", error);
+  }
+}
+
+function materialIcon(type) {
+  if (type === "pdf") return "PDF";
+  if (type === "docx") return "DOCX";
+  if (type === "text") return "TEXTO";
+  return type.toUpperCase();
+}
+
+function renderMaterialSources() {
+  const list = $("materialSourcesList");
+  const count = state.materialSources.length;
+  $("materialCount").textContent = count + (count === 1 ? " fuente" : " fuentes");
+
+  if (!count) {
+    list.innerHTML = '<div class="empty-material">Todavía no agregaste material.</div>';
+    return;
+  }
+
+  list.innerHTML = "";
+
+  for (const source of state.materialSources) {
+    const row = document.createElement("div");
+    row.className = "material-source" + (source.enabled === false ? " disabled" : "");
+    row.innerHTML =
+      '<label class="source-toggle"><input type="checkbox" ' + (source.enabled === false ? "" : "checked") + '><span></span></label>'
+      + '<div class="source-type">' + esc(materialIcon(source.type || "text")) + '</div>'
+      + '<div class="source-info"><strong>' + esc(source.name) + '</strong>'
+      + '<small>' + source.text.length.toLocaleString() + ' caracteres</small></div>'
+      + '<button class="ghost source-remove">Quitar</button>';
+
+    row.querySelector("input").onchange = event => {
+      source.enabled = event.target.checked;
+      row.classList.toggle("disabled", !source.enabled);
+      persistMaterialSources();
+    };
+
+    row.querySelector(".source-remove").onclick = async () => {
+      state.materialSources = state.materialSources.filter(item => item.id !== source.id);
+      await persistMaterialSources();
+      renderMaterialSources();
+      if (state.analysisMode === "material") updateInsights();
+    };
+
+    list.appendChild(row);
+  }
+}
+
+async function extractPdfText(file) {
+  if (!window.pdfjsLib) throw new Error("PDF.js no está disponible");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({data:buffer}).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const text = content.items.map(item => item.str).join(" ").trim();
+    if (text) pages.push(text);
+  }
+
+  return pages.join("\n\n");
+}
+
+async function extractDocxText(file) {
+  if (!window.mammoth?.extractRawText) throw new Error("Mammoth no está disponible");
+  const buffer = await file.arrayBuffer();
+  const result = await window.mammoth.extractRawText({arrayBuffer:buffer});
+  return result.value || "";
+}
+
+async function extractFileText(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+
+  if (extension === "pdf") return {type:"pdf", text:await extractPdfText(file)};
+  if (extension === "docx") return {type:"docx", text:await extractDocxText(file)};
+
+  const raw = await file.text();
+
+  if (extension === "html" || extension === "htm") {
+    const doc = new DOMParser().parseFromString(raw, "text/html");
+    return {type:"html", text:doc.body?.innerText || ""};
+  }
+
+  return {type:extension || "text", text:raw};
+}
+
+async function addFilesAsMaterials(files) {
+  const selected = [...files];
+  if (!selected.length) return;
+
+  $("materialImportStatus").classList.remove("hidden");
+  $("materialImportStatus").textContent = "Leyendo " + selected.length + (selected.length === 1 ? " archivo…" : " archivos…");
+
+  let added = 0;
+  const errors = [];
+
+  for (const file of selected) {
+    try {
+      const result = await extractFileText(file);
+      const text = String(result.text || "").trim();
+
+      if (!text) throw new Error("No encontré texto dentro del archivo");
+
+      state.materialSources.push({
+        id: crypto.randomUUID?.() || (Date.now() + "-" + Math.random()),
+        name: file.name,
+        type: result.type,
+        text,
+        enabled: true,
+        addedAt: Date.now()
+      });
+      added++;
+    } catch (error) {
+      errors.push(file.name);
+      console.warn("No pude importar", file.name, error);
+    }
+  }
+
+  await persistMaterialSources();
+  renderMaterialSources();
+
+  $("materialImportStatus").textContent =
+    added + (added === 1 ? " archivo agregado" : " archivos agregados")
+    + (errors.length ? ". No pude leer: " + errors.join(", ") : ".");
+
+  $("materialFilesInput").value = "";
+}
+
+async function addManualMaterial() {
+  const text = $("materialTextInput").value.trim();
+  if (!text) {
+    alert("Pegá o escribí un texto primero.");
+    return;
+  }
+
+  const title = $("materialTitleInput").value.trim() || "Texto " + (state.materialSources.length + 1);
+
+  state.materialSources.push({
+    id: crypto.randomUUID?.() || String(Date.now()),
+    name: title,
+    type: "text",
+    text,
+    enabled: true,
+    addedAt: Date.now()
+  });
+
+  $("materialTitleInput").value = "";
+  $("materialTextInput").value = "";
+
+  await persistMaterialSources();
+  renderMaterialSources();
+  toast("Texto agregado");
+}
+
+async function clearMaterials() {
+  if (!state.materialSources.length) return;
+  if (!confirm("¿Quitar todo el material cargado?")) return;
+
+  state.materialSources = [];
+  await persistMaterialSources();
+  renderMaterialSources();
+
+  if (state.analysisMode === "material") {
+    state.analysisMode = "listen";
+    updateInsights();
+  }
+}
+
+function analyzeMaterials() {
+  const active = state.materialSources.filter(source => source.enabled !== false);
+  if (!active.length) {
+    alert("Agregá al menos una fuente para analizar.");
+    return;
+  }
+
+  state.analysisMode = "material";
+  state.showingTranslation = false;
+  $("topicInput").value = "";
+  updateInsights(true);
+  setAppView("study");
+  toast(active.length === 1 ? "Material analizado" : "Fuentes combinadas y analizadas");
+}
+
+function setAppView(viewName) {
+  document.querySelectorAll(".app-view").forEach(view => {
+    view.classList.toggle("hidden", view.id !== "view-" + viewName);
+    view.classList.toggle("active", view.id === "view-" + viewName);
+  });
+
+  document.querySelectorAll(".workspace-tab").forEach(button => {
+    button.classList.toggle("active", button.dataset.view === viewName);
+  });
+
+  if (viewName === "study") updateInsights();
+  if (viewName === "material") renderMaterialSources();
 }
 
 function safeFilename(base, extension) {
@@ -1556,17 +1948,27 @@ $("copyBtn").onclick = async () => {
 $("exportTextPdfBtn").onclick = exportTextPdf;
 $("exportTextTxtBtn").onclick = exportTextTxt;
 $("exportMapPngBtn").onclick = exportMapPng;
+document.querySelectorAll(".workspace-tab").forEach(button => {
+  button.onclick = () => setAppView(button.dataset.view);
+});
+$("addMaterialTextBtn").onclick = addManualMaterial;
+$("chooseMaterialFilesBtn").onclick = () => $("materialFilesInput").click();
+$("materialFilesInput").onchange = event => addFilesAsMaterials(event.target.files);
+$("clearMaterialsBtn").onclick = clearMaterials;
+$("analyzeMaterialsBtn").onclick = analyzeMaterials;
+
+$("materialDropzone").ondragover = event => {
+  event.preventDefault();
+  $("materialDropzone").classList.add("dragging");
+};
+$("materialDropzone").ondragleave = () => $("materialDropzone").classList.remove("dragging");
+$("materialDropzone").ondrop = event => {
+  event.preventDefault();
+  $("materialDropzone").classList.remove("dragging");
+  addFilesAsMaterials(event.dataTransfer.files);
+};
 $("translateGeneratedBtn").onclick = translateGeneratedContent;
-$("useTranslatedMapBtn").onclick = () => {
-  if (!state.translatedMap) return;
-  renderConceptMap(state.translatedMap);
-  if (state.translatedStudy) renderStudy(state.translatedStudy);
-  toast("Mostrando traducción");
-};
-$("showOriginalMapBtn").onclick = () => {
-  updateInsights();
-  toast("Mostrando original");
-};
+$("showOriginalMapBtn").onclick = showOriginalAnalysis;
 $("copyStudyBtn").onclick = copyStudyMaterial;
 
 $("toggleRawBtn").onclick = () => {
@@ -1593,6 +1995,8 @@ $("topicInput").oninput = () => {
 $("languageSelect").onchange = autosave;
 
 $("cleanTranscript").oninput = () => {
+  state.analysisMode = "listen";
+  state.showingTranslation = false;
   updateInsights();
 };
 
@@ -1710,6 +2114,7 @@ if (!window.isSecureContext) {
 }
 
 restore();
+restoreMaterialSources();
 renderRaw();
 renderHistory();
 updateInsights();
