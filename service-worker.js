@@ -1,4 +1,4 @@
-const CACHE = "escuchamapa-v5";
+const CACHE = "escuchamapa-v6";
 const APP_SHELL = [
   "./",
   "./index.html",
