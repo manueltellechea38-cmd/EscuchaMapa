@@ -14,106 +14,198 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="logo">E</span><div><strong>EscuchaMapa</strong><small id="headerStatus">Listo para escuchar</small></div></div>
-  <div class="topbar-actions"><button id="updateAppBtn" class="update-app-btn hidden">Actualizar app</button><button id="installBtn" class="ghost hidden">Instalar</button></div>
+  <div class="brand">
+    <span class="logo">E</span>
+    <div><strong>EscuchaMapa</strong><small id="headerStatus">Listo para estudiar</small></div>
+  </div>
+  <div class="topbar-actions">
+    <button id="updateAppBtn" class="update-app-btn hidden">Actualizar app</button>
+    <button id="installBtn" class="ghost hidden">Instalar</button>
+  </div>
 </header>
 
+<nav class="workspace-nav" aria-label="Secciones principales">
+  <button class="workspace-tab active" data-view="listen">Escuchar</button>
+  <button class="workspace-tab" data-view="material">Material</button>
+  <button class="workspace-tab" data-view="study">Estudiar</button>
+  <button class="workspace-tab" data-view="history">Historial</button>
+</nav>
+
 <main class="shell">
-  <section class="recorder card">
-    <div class="recorder-main">
-      <button id="recordButton" class="record-button" aria-label="Grabar"><span></span></button>
-      <div>
-        <h1 id="recordTitle">Tocá para empezar</h1>
-        <p id="recordSubtitle">Grabá una clase o conversación y quedate con lo importante.</p>
-        <div class="meta"><span id="timer">00:00:00</span><span id="micState">Micrófono apagado</span></div>
+  <section id="view-listen" class="app-view active">
+    <section class="recorder card">
+      <div class="recorder-main">
+        <button id="recordButton" class="record-button" aria-label="Grabar"><span></span></button>
+        <div>
+          <span class="kicker">ESCUCHAR</span>
+          <h1 id="recordTitle">Tocá para empezar</h1>
+          <p id="recordSubtitle">Grabá una clase o conversación y convertí lo importante en material de estudio.</p>
+          <div class="meta"><span id="timer">00:00:00</span><span id="micState">Micrófono apagado</span></div>
+        </div>
       </div>
-    </div>
-    <div class="meter"><div id="audioLevel"></div></div>
+      <div class="meter"><div id="audioLevel"></div></div>
 
-    <div class="settings">
-      <label><span>Idioma</span><select id="languageSelect">
-        <option value="es-UY" selected>Español</option>
-        <option value="en-US">English</option>
-        <option value="bilingual">Español + English</option>
-      </select></label>
-      <label><span>Tema, si lo sabés</span><input id="topicInput" placeholder="Ej: Revolución Industrial"></label>
-    </div>
+      <div class="settings">
+        <label><span>Idioma</span><select id="languageSelect">
+          <option value="es-UY" selected>Español</option>
+          <option value="en-US">English</option>
+          <option value="bilingual">Español + English</option>
+        </select></label>
+        <label><span>Tema, si lo sabés</span><input id="topicInput" placeholder="Ej: Revolución Industrial"></label>
+      </div>
 
-    <div class="actions">
-      <button id="pauseBtn" disabled>Pausar</button>
-      <button id="finishBtn" disabled>Finalizar</button>
-      <button id="undoBtn" disabled>Deshacer último</button>
-      <button id="newSessionBtn">Nueva sesión</button>
-    </div>
-    <p id="compatibilityNotice" class="notice hidden"></p>
-  </section>
+      <div class="actions">
+        <button id="pauseBtn" disabled>Pausar</button>
+        <button id="finishBtn" disabled>Finalizar</button>
+        <button id="undoBtn" disabled>Deshacer último</button>
+        <button id="newSessionBtn">Nueva sesión</button>
+      </div>
+      <p id="compatibilityNotice" class="notice hidden"></p>
+    </section>
 
-  <section class="grid">
     <article class="card transcript-card">
       <div class="head">
-        <div><span class="kicker">TEXTO</span><h2>Lo importante</h2></div>
-        <div class="head-actions"><button id="copyBtn" class="ghost">Copiar</button><button id="exportTextPdfBtn" class="ghost">PDF</button><button id="exportTextTxtBtn" class="ghost">TXT</button><button id="clearTextBtn" class="ghost danger">Borrar</button></div>
+        <div><span class="kicker">TRANSCRIPCIÓN</span><h2>Lo importante</h2></div>
+        <div class="head-actions">
+          <button id="copyBtn" class="ghost">Copiar</button>
+          <button id="exportTextPdfBtn" class="ghost">PDF</button>
+          <button id="exportTextTxtBtn" class="ghost">TXT</button>
+          <button id="clearTextBtn" class="ghost danger">Borrar</button>
+        </div>
       </div>
       <div id="cleanTranscript" class="transcript" contenteditable="true" spellcheck="true"><p class="placeholder">Todavía no hay nada transcrito.</p></div>
       <div id="interimTranscript" class="interim"></div>
-      <div class="transcript-foot"><span id="qualityState">Reconocimiento del navegador</span><button id="toggleRawBtn" class="link-btn">Ver todo lo escuchado</button></div>
+      <div class="transcript-foot">
+        <span id="qualityState">Reconocimiento del navegador</span>
+        <button id="toggleRawBtn" class="link-btn">Ver todo lo escuchado</button>
+      </div>
       <div id="rawDrawer" class="raw-drawer hidden"><div id="rawTranscript"></div></div>
     </article>
+  </section>
 
-    <aside class="card ideas-card">
-      <div class="head"><div><span class="kicker">ANÁLISIS</span><h2>Ideas</h2></div><button id="refreshInsightsBtn" class="ghost">Actualizar</button></div>
-      <div class="topic-box"><span>Tema detectado</span><strong id="detectedTopic">Todavía no hay suficiente texto</strong></div>
-      <h3>Conceptos clave</h3><div id="keywords" class="chips"></div>
-      <h3>Resumen</h3><div id="summary" class="summary">Todavía no hay suficiente texto.</div>
-      <div id="languageTools" class="language-tools hidden">
-        <div class="language-detected"><span>Idioma detectado</span><strong id="detectedLanguage">English</strong></div>
-        <button id="translateGeneratedBtn" class="translate-btn">Traducir al español</button>
+  <section id="view-material" class="app-view hidden">
+    <section class="card material-hero">
+      <div class="head">
+        <div><span class="kicker">MATERIAL</span><h2>Agregá tus fuentes</h2></div>
+        <span class="material-count" id="materialCount">0 fuentes</span>
       </div>
-      <div id="translationPanel" class="translation-panel hidden">
-        <div class="translation-title"><span>TRADUCCIÓN</span><strong>Material de estudio en español</strong></div>
-        <div id="translationOutput" class="translation-output"></div>
-        <div class="translation-actions">
-          <button id="useTranslatedMapBtn" class="ghost">Ver mapa traducido</button>
-          <button id="showOriginalMapBtn" class="ghost">Ver original</button>
+      <p class="section-description">Podés pegar texto o cargar varios archivos. Después EscuchaMapa los combina y genera el mismo análisis que con una grabación.</p>
+
+      <div class="material-grid">
+        <div class="material-entry">
+          <label><span>Nombre del texto</span><input id="materialTitleInput" placeholder="Ej: Apuntes de historia"></label>
+          <label><span>Texto</span><textarea id="materialTextInput" rows="10" placeholder="Pegá acá apuntes, una explicación, un artículo o cualquier texto..."></textarea></label>
+          <button id="addMaterialTextBtn" class="primary-action">Agregar texto</button>
+        </div>
+
+        <div id="materialDropzone" class="dropzone">
+          <div class="drop-icon">+</div>
+          <strong>Agregar archivos</strong>
+          <span>Elegí varios a la vez</span>
+          <small>TXT, MD, CSV, JSON, HTML, PDF y DOCX</small>
+          <input id="materialFilesInput" type="file" multiple accept=".txt,.md,.csv,.json,.html,.htm,.pdf,.docx">
+          <button id="chooseMaterialFilesBtn" class="ghost">Elegir archivos</button>
         </div>
       </div>
-    </aside>
-  </section>
 
-  <section class="card">
-    <div class="head"><div><span class="kicker">MAPA CONCEPTUAL</span><h2>Cómo se conecta el tema</h2></div><div class="head-actions"><button id="exportMapPngBtn" class="ghost">Descargar PNG</button><button id="rebuildMapBtn" class="ghost">Regenerar</button></div></div>
-    <div id="conceptMap" class="concept-map"><div class="empty-map"><strong>El mapa aparecerá cuando haya suficiente contenido.</strong><span>Usa ideas y frases, no solamente palabras sueltas.</span></div></div>
-  </section>
+      <div id="materialImportStatus" class="import-status hidden"></div>
+    </section>
 
-
-  <section class="card study-card">
-    <div class="head">
-      <div><span class="kicker">MODO ESTUDIO</span><h2>Repaso de la sesión</h2></div>
-      <button id="copyStudyBtn" class="ghost">Copiar estudio</button>
-    </div>
-    <div class="study-grid">
-      <div class="study-block">
-        <span class="study-label">PUNTOS CLAVE</span>
-        <div id="studyPoints" class="study-content"><span class="history-empty">Todavía no hay suficiente contenido.</span></div>
+    <section class="card">
+      <div class="head">
+        <div><span class="kicker">FUENTES</span><h2>Material cargado</h2></div>
+        <div class="head-actions">
+          <button id="clearMaterialsBtn" class="ghost danger">Vaciar</button>
+          <button id="analyzeMaterialsBtn" class="primary-action">Analizar material</button>
+        </div>
       </div>
-      <div class="study-block">
-        <span class="study-label">PREGUNTAS PARA REPASAR</span>
-        <div id="studyQuestions" class="study-content"><span class="history-empty">Todavía no hay preguntas.</span></div>
+      <div id="materialSourcesList" class="material-list">
+        <div class="empty-material">Todavía no agregaste material.</div>
       </div>
-    </div>
+    </section>
   </section>
 
-  <section class="card">
-    <div class="head"><div><span class="kicker">SESIONES</span><h2>Historial</h2></div><button id="clearHistoryBtn" class="ghost danger">Borrar historial</button></div>
-    <div id="historyList" class="history-list"></div>
+  <section id="view-study" class="app-view hidden">
+    <section class="study-topbar">
+      <div>
+        <span class="kicker">ANÁLISIS ACTUAL</span>
+        <strong id="analysisSourceLabel">Grabación / transcripción</strong>
+      </div>
+      <button id="refreshInsightsBtn" class="ghost">Actualizar análisis</button>
+    </section>
+
+    <section class="grid">
+      <article class="card ideas-card">
+        <div class="head"><div><span class="kicker">IDEAS</span><h2>Resumen y conceptos</h2></div></div>
+        <div class="topic-box"><span>Tema detectado</span><strong id="detectedTopic">Todavía no hay suficiente texto</strong></div>
+        <h3>Conceptos clave</h3><div id="keywords" class="chips"></div>
+        <h3>Resumen</h3><div id="summary" class="summary">Todavía no hay suficiente texto.</div>
+      </article>
+
+      <aside class="card translate-card">
+        <div class="head"><div><span class="kicker">IDIOMA</span><h2>Traducción</h2></div></div>
+        <div class="language-detected"><span>Detectado</span><strong id="detectedLanguage">Sin detectar</strong></div>
+        <label class="translate-target"><span>Traducir resultados a</span>
+          <select id="translationTarget">
+            <option value="es" selected>Español</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <button id="translateGeneratedBtn" class="primary-action">Traducir resultados</button>
+        <button id="showOriginalMapBtn" class="ghost hidden">Volver al original</button>
+        <p id="translationStatus" class="translation-status">La traducción se muestra dentro de EscuchaMapa.</p>
+      </aside>
+    </section>
+
+    <section class="card">
+      <div class="head">
+        <div><span class="kicker">MAPA CONCEPTUAL</span><h2>Cómo se conecta el tema</h2></div>
+        <div class="head-actions">
+          <button id="exportMapPngBtn" class="ghost">Descargar PNG</button>
+          <button id="rebuildMapBtn" class="ghost">Regenerar</button>
+        </div>
+      </div>
+      <div id="conceptMap" class="concept-map">
+        <div class="empty-map"><strong>El mapa aparecerá cuando haya suficiente contenido.</strong><span>Usa ideas y frases, no solamente palabras sueltas.</span></div>
+      </div>
+    </section>
+
+    <section class="card study-card">
+      <div class="head">
+        <div><span class="kicker">MODO ESTUDIO</span><h2>Repaso</h2></div>
+        <button id="copyStudyBtn" class="ghost">Copiar estudio</button>
+      </div>
+      <div class="study-grid">
+        <div class="study-block">
+          <span class="study-label">PUNTOS CLAVE</span>
+          <div id="studyPoints" class="study-content"><span class="history-empty">Todavía no hay suficiente contenido.</span></div>
+        </div>
+        <div class="study-block">
+          <span class="study-label">PREGUNTAS PARA REPASAR</span>
+          <div id="studyQuestions" class="study-content"><span class="history-empty">Todavía no hay preguntas.</span></div>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section id="view-history" class="app-view hidden">
+    <section class="card">
+      <div class="head">
+        <div><span class="kicker">SESIONES</span><h2>Historial</h2></div>
+        <button id="clearHistoryBtn" class="ghost danger">Borrar historial</button>
+      </div>
+      <div id="historyList" class="history-list"></div>
+    </section>
   </section>
 </main>
 
 <footer class="footer">
-  <span>Los textos se guardan en este dispositivo.</span>
-  <span>En iPhone una PWA no puede garantizar el micrófono con la pantalla bloqueada.</span>
+  <span>EscuchaMapa guarda tus sesiones en este dispositivo.</span>
+  <span>Los archivos importados se procesan para extraer texto y analizarlos.</span>
 </footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.9.1/mammoth.browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="js/app.js"></script>
 </body>
