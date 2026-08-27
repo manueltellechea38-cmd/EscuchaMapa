@@ -21,7 +21,10 @@ const state = {
   recognitionLang: "es-UY",
   votes: { es: 0, en: 0 },
   currentMap: null,
-  currentMapCanvas: null
+  currentMapCanvas: null,
+  translatedMap: null,
+  translatedStudy: null,
+  translationSource: ""
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -72,6 +75,263 @@ function detectLanguage(text) {
     if (EN.has(w)) en++;
   }
   return en > es + 1 ? "en-US" : es > en + 1 ? "es-UY" : state.recognitionLang;
+}
+
+
+function detectContentLanguage(text) {
+  const tokens = words(text, true);
+  if (!tokens.length) return "unknown";
+
+  let es = /[ñáéíóú¿¡]/i.test(text) ? 4 : 0;
+  let en = 0;
+
+  for (const token of tokens) {
+    if (ES.has(token)) es++;
+    if (EN.has(token)) en++;
+  }
+
+  const selected = $("languageSelect")?.value;
+  if (selected === "en-US") en += 3;
+  if (selected === "es-UY") es += 2;
+
+  if (en >= es + 2) return "en-US";
+  if (es >= en + 2) return "es-UY";
+  return "mixed";
+}
+
+function languageLabel(code) {
+  if (code === "en-US") return "English";
+  if (code === "es-UY") return "Español";
+  if (code === "mixed") return "Español + English";
+  return "Sin detectar";
+}
+
+function buildStudyData(mapData, languageCode) {
+  if (!mapData?.branches?.length) return {points:[], questions:[]};
+
+  const isEnglish = languageCode === "en-US";
+  const points = mapData.branches.map(branch => {
+    let text = branch.word + ": " + shortenMapEvidence(branch.evidence, 22);
+    if (branch.links?.length) {
+      text += isEnglish
+        ? " Related: " + branch.links.slice(0, 3).join(", ") + "."
+        : " Relacionado con: " + branch.links.slice(0, 3).join(", ") + ".";
+    }
+    return text;
+  });
+
+  const questions = [];
+  for (const branch of mapData.branches.slice(0, 4)) {
+    questions.push(
+      isEnglish
+        ? "How would you explain " + branch.word + " in your own words?"
+        : "¿Cómo explicarías " + branch.word + " con tus propias palabras?"
+    );
+  }
+
+  if (mapData.branches.length >= 2) {
+    const a = mapData.branches[0].word;
+    const b = mapData.branches[1].word;
+    questions.push(
+      isEnglish
+        ? "What relationship can you identify between " + a + " and " + b + "?"
+        : "¿Qué relación podés encontrar entre " + a + " y " + b + "?"
+    );
+  }
+
+  return {points, questions:questions.slice(0, 5)};
+}
+
+function renderStudy(studyData) {
+  const points = studyData?.points || [];
+  const questions = studyData?.questions || [];
+
+  $("studyPoints").innerHTML = points.length
+    ? "<ol>" + points.map(item => "<li>" + esc(item) + "</li>").join("") + "</ol>"
+    : '<span class="history-empty">Todavía no hay suficiente contenido.</span>';
+
+  $("studyQuestions").innerHTML = questions.length
+    ? "<ol>" + questions.map(item => "<li>" + esc(item) + "</li>").join("") + "</ol>"
+    : '<span class="history-empty">Todavía no hay preguntas.</span>';
+}
+
+function updateLanguageTools(fullText) {
+  const detected = detectContentLanguage(fullText);
+  $("detectedLanguage").textContent = languageLabel(detected);
+
+  const showTranslation = detected === "en-US";
+  $("languageTools").classList.toggle("hidden", !showTranslation);
+
+  const signature = norm(fullText).slice(0, 1200);
+  if (state.translationSource && state.translationSource !== signature) {
+    state.translatedMap = null;
+    state.translatedStudy = null;
+    state.translationSource = "";
+    $("translationPanel").classList.add("hidden");
+  }
+
+  return detected;
+}
+
+function translatedStudyHtml(result) {
+  let html = '<div class="translated-section"><span>Resumen</span><p>' + esc(result.summary || "") + '</p></div>';
+
+  if (result.study?.points?.length) {
+    html += '<div class="translated-section"><span>Puntos clave</span><ol>'
+      + result.study.points.map(item => "<li>" + esc(item) + "</li>").join("")
+      + "</ol></div>";
+  }
+
+  if (result.study?.questions?.length) {
+    html += '<div class="translated-section"><span>Preguntas</span><ol>'
+      + result.study.questions.map(item => "<li>" + esc(item) + "</li>").join("")
+      + "</ol></div>";
+  }
+
+  return html;
+}
+
+async function translateWithBrowser(text, translator) {
+  if (!text) return "";
+  return await translator.translate(text);
+}
+
+async function translateGeneratedContent() {
+  const units = transcriptUnits();
+  const fullText = units.join(" ");
+  if (!fullText) {
+    alert("Todavía no hay contenido para traducir.");
+    return;
+  }
+
+  const detected = detectContentLanguage(fullText);
+  if (detected !== "en-US") {
+    toast("La traducción aparece cuando el contenido está en inglés");
+    return;
+  }
+
+  const keywords = keywordData(fullText, 9);
+  const topic = $("topicInput").value.trim()
+    || keywords.slice(0, 3).map(item => item.word).join(" · ")
+    || "Main topic";
+
+  const originalMap = buildMapData(units, topic);
+  const originalSummary = createSummary(units);
+  const originalStudy = buildStudyData(originalMap, "en-US");
+
+  const button = $("translateGeneratedBtn");
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Traduciendo…";
+
+  try {
+    if (globalThis.Translator?.create) {
+      // Create is called directly from the click interaction because supporting
+      // browsers require user activation to create the translator.
+      const translatorPromise = globalThis.Translator.create({
+        sourceLanguage: "en",
+        targetLanguage: "es"
+      });
+
+      const translator = await translatorPromise;
+
+      const translatedMap = originalMap ? {
+        topic: await translateWithBrowser(originalMap.topic, translator),
+        branches: []
+      } : null;
+
+      if (originalMap) {
+        for (const branch of originalMap.branches) {
+          translatedMap.branches.push({
+            word: await translateWithBrowser(branch.word, translator),
+            evidence: await translateWithBrowser(branch.evidence, translator),
+            secondaryEvidence: branch.secondaryEvidence
+              ? await translateWithBrowser(branch.secondaryEvidence, translator)
+              : "",
+            links: branch.links?.length
+              ? await Promise.all(branch.links.map(link => translateWithBrowser(link, translator)))
+              : []
+          });
+        }
+      }
+
+      const translatedStudy = {
+        points: await Promise.all(originalStudy.points.map(item => translateWithBrowser(item, translator))),
+        questions: await Promise.all(originalStudy.questions.map(item => translateWithBrowser(item, translator)))
+      };
+
+      const result = {
+        summary: await translateWithBrowser(originalSummary, translator),
+        map: translatedMap,
+        study: translatedStudy
+      };
+
+      state.translatedMap = result.map;
+      state.translatedStudy = result.study;
+      state.translationSource = norm(fullText).slice(0, 1200);
+
+      $("translationOutput").innerHTML = translatedStudyHtml(result);
+      $("translationPanel").classList.remove("hidden");
+      toast("Traducción lista");
+      translator.destroy?.();
+      return;
+    }
+
+    // iPhone/Safari and other browsers without the built-in Translator API:
+    // send only the generated study material, not the whole raw transcript.
+    const compactText = [
+      "SUMMARY",
+      originalSummary,
+      "",
+      "CONCEPT MAP",
+      originalMap?.topic || topic,
+      ...(originalMap?.branches || []).map(branch =>
+        branch.word + ": " + shortenMapEvidence(branch.evidence, 18)
+      ),
+      "",
+      "STUDY QUESTIONS",
+      ...originalStudy.questions
+    ].join("\n");
+
+    try {
+      await navigator.clipboard.writeText(compactText);
+    } catch {}
+
+    const translateUrl = "https://translate.google.com/?sl=en&tl=es&text="
+      + encodeURIComponent(compactText.slice(0, 1800))
+      + "&op=translate";
+
+    window.open(translateUrl, "_blank", "noopener");
+    toast("Abrí el traductor con el material generado");
+  } catch (error) {
+    console.warn("Traducción:", error);
+    const compact = [originalSummary, ...originalStudy.points, ...originalStudy.questions].join("\n\n");
+    try { await navigator.clipboard.writeText(compact); } catch {}
+    window.open("https://translate.google.com/?sl=en&tl=es&op=translate", "_blank", "noopener");
+    toast("Copié el material y abrí el traductor");
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+function copyStudyMaterial() {
+  const points = $("studyPoints").innerText.trim();
+  const questions = $("studyQuestions").innerText.trim();
+
+  const content = [
+    "ESCUCHAMAPA - MODO ESTUDIO",
+    "",
+    "PUNTOS CLAVE",
+    points,
+    "",
+    "PREGUNTAS PARA REPASAR",
+    questions
+  ].join("\n");
+
+  navigator.clipboard.writeText(content)
+    .then(() => toast("Material de estudio copiado"))
+    .catch(() => {});
 }
 
 function formatDuration(ms) {
@@ -937,7 +1197,11 @@ function updateInsights(showFeedback=false) {
   $("detectedTopic").textContent = manual || keywords.slice(0,3).map(item => item.word).join(" · ") || "Todavía no hay suficiente texto";
   $("summary").textContent = createSummary(units) || "Todavía no hay suficiente texto.";
 
-  renderConceptMap(buildMapData(units, topic));
+  const mapData = buildMapData(units, topic);
+  renderConceptMap(mapData);
+
+  const detectedLanguage = updateLanguageTools(fullText);
+  renderStudy(buildStudyData(mapData, detectedLanguage));
 
   if (showFeedback) toast("Análisis actualizado");
 }
@@ -1292,6 +1556,18 @@ $("copyBtn").onclick = async () => {
 $("exportTextPdfBtn").onclick = exportTextPdf;
 $("exportTextTxtBtn").onclick = exportTextTxt;
 $("exportMapPngBtn").onclick = exportMapPng;
+$("translateGeneratedBtn").onclick = translateGeneratedContent;
+$("useTranslatedMapBtn").onclick = () => {
+  if (!state.translatedMap) return;
+  renderConceptMap(state.translatedMap);
+  if (state.translatedStudy) renderStudy(state.translatedStudy);
+  toast("Mostrando traducción");
+};
+$("showOriginalMapBtn").onclick = () => {
+  updateInsights();
+  toast("Mostrando original");
+};
+$("copyStudyBtn").onclick = copyStudyMaterial;
 
 $("toggleRawBtn").onclick = () => {
   $("rawDrawer").classList.toggle("hidden");
