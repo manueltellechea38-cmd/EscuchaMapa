@@ -20,7 +20,8 @@ const state = {
   deferredPrompt: null,
   recognitionLang: "es-UY",
   votes: { es: 0, en: 0 },
-  currentMap: null
+  currentMap: null,
+  currentMapCanvas: null
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -487,59 +488,118 @@ function relatedTerms(units, branchWord, limit=3) {
     .map(([word]) => word);
 }
 
+function mapSimilarity(aText, bText) {
+  const a = new Set(words(aText));
+  const b = new Set(words(bText));
+  if (!a.size || !b.size) return 0;
+  const overlap = [...a].filter(x => b.has(x)).length;
+  return overlap / Math.max(1, Math.min(a.size, b.size));
+}
+
+function mapUnitScore(unit, keywordSet, frequency) {
+  const unitWords = words(unit);
+  if (!unitWords.length) return 0;
+
+  const unique = [...new Set(unitWords)];
+  const keywordHits = unique.filter(w => keywordSet.has(w)).length;
+  const repetition = unique.reduce((sum, w) => sum + (frequency.get(w) || 0), 0);
+  const lengthBonus = Math.min(1, unique.length / 15);
+
+  return keywordHits * 1.6 + repetition * .12 + lengthBonus;
+}
+
 function buildMapData(units, topic) {
-  const usable = units.filter(unit => words(unit).length >= 3);
+  const usable = units
+    .map(unit => String(unit || "").trim())
+    .filter(unit => words(unit).length >= 3);
+
+  if (usable.length < 2) return null;
+
   const allText = usable.join(" ");
-  const keywords = keywordData(allText, 18);
+  const keywordPool = keywordData(allText, 30);
+  if (keywordPool.length < 2) return null;
 
-  if (usable.length < 2 || keywords.length < 2) return null;
+  const frequency = new Map(keywordPool.map(k => [k.word, k.count]));
+  const keywordSet = new Set(keywordPool.map(k => k.word));
 
-  const globalKeys = new Set(keywords.map(k => k.word));
+  const desiredBranches =
+    usable.length >= 8 ? 5 :
+    usable.length >= 5 ? 4 :
+    usable.length >= 3 ? 3 : 2;
+
+  const candidateConcepts = keywordPool.filter(item => {
+    const appearsIn = usable.filter(unit => words(unit).includes(item.word)).length;
+    return appearsIn >= 1;
+  });
+
   const branches = [];
 
-  for (const key of keywords) {
-    if (branches.length >= 5) break;
+  for (const candidate of candidateConcepts) {
+    if (branches.length >= desiredBranches) break;
 
-    const matches = usable.filter(unit => words(unit).includes(key.word));
+    const matches = usable.filter(unit => words(unit).includes(candidate.word));
     if (!matches.length) continue;
 
-    const evidence = matches
-      .map(unit => ({
-        unit,
-        score: words(unit).filter(w => globalKeys.has(w)).length + Math.min(18, words(unit).length) * .04
-      }))
-      .sort((a,b) => b.score - a.score)[0].unit;
+    const ranked = matches
+      .map(unit => ({ unit, score: mapUnitScore(unit, keywordSet, frequency) }))
+      .sort((a, b) => b.score - a.score);
 
-    const tooSimilar = branches.some(branch => {
-      const a = new Set(words(branch.evidence));
-      const b = new Set(words(evidence));
-      const overlap = [...a].filter(x => b.has(x)).length;
-      return overlap / Math.max(1, Math.min(a.size,b.size)) > .75;
-    });
+    const evidence = ranked[0]?.unit || matches[0];
 
-    if (tooSimilar) continue;
+    const conceptTooSimilar = branches.some(branch =>
+      mapSimilarity(branch.word, candidate.word) > .7 ||
+      mapSimilarity(branch.evidence, evidence) > .66
+    );
+    if (conceptTooSimilar) continue;
+
+    const relatedCounts = new Map();
+    for (const unit of matches) {
+      for (const w of words(unit)) {
+        if (w === candidate.word) continue;
+        if (!keywordSet.has(w)) continue;
+        relatedCounts.set(w, (relatedCounts.get(w) || 0) + (frequency.get(w) || 1));
+      }
+    }
+
+    const related = [...relatedCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([word]) => word)
+      .filter(word => !branches.some(branch => branch.word === word))
+      .slice(0, 4);
+
+    const secondaryEvidence = ranked
+      .slice(1)
+      .map(item => item.unit)
+      .find(unit => mapSimilarity(unit, evidence) < .58);
 
     branches.push({
-      word: key.word,
+      word: candidate.word,
       evidence,
-      links: relatedTerms(usable, key.word, 3)
+      secondaryEvidence: secondaryEvidence || "",
+      links: related
     });
   }
 
   if (branches.length < 2) {
-    const fallback = usable.slice(0, Math.min(4, usable.length)).map((unit,index) => ({
-      word: keywordData(unit, 1)[0]?.word || ("Idea " + (index + 1)),
-      evidence: unit,
-      links: keywordData(unit, 4).slice(1).map(k => k.word)
-    }));
-    return {topic, branches:fallback};
+    const fallback = usable
+      .slice(0, Math.min(desiredBranches, usable.length))
+      .map((unit, index) => {
+        const localKeys = keywordData(unit, 5);
+        return {
+          word: localKeys[0]?.word || ("Idea " + (index + 1)),
+          evidence: unit,
+          secondaryEvidence: "",
+          links: localKeys.slice(1, 4).map(k => k.word)
+        };
+      });
+
+    return { topic, branches: fallback };
   }
 
-  return {topic, branches};
+  return { topic, branches };
 }
 
-
-function shortenMapEvidence(text, maxWords=18) {
+function shortenMapEvidence(text, maxWords=22) {
   const cleanText = String(text || "").trim();
   if (!cleanText) return "";
   const parts = cleanText.split(/\s+/);
@@ -558,7 +618,7 @@ function mapRoundRect(ctx, x, y, w, h, radius) {
   ctx.closePath();
 }
 
-function mapWrapLines(ctx, text, maxWidth, maxLines=4) {
+function mapWrapLines(ctx, text, maxWidth, maxLines=5) {
   const tokens = String(text || "").split(/\s+/).filter(Boolean);
   const lines = [];
   let current = "";
@@ -584,17 +644,14 @@ function mapWrapLines(ctx, text, maxWidth, maxLines=4) {
   return lines;
 }
 
-function mapDrawCenteredText(ctx, text, x, y, maxWidth, lineHeight, maxLines=4) {
+function mapDrawCenteredText(ctx, text, x, y, maxWidth, lineHeight, maxLines=5) {
   const lines = mapWrapLines(ctx, text, maxWidth, maxLines);
   const totalHeight = Math.max(0, (lines.length - 1) * lineHeight);
   const startY = y - totalHeight / 2;
-
-  lines.forEach((line, index) => {
-    ctx.fillText(line, x, startY + index * lineHeight);
-  });
+  lines.forEach((line, index) => ctx.fillText(line, x, startY + index * lineHeight));
 }
 
-function mapDrawArrow(ctx, x1, y1, x2, y2, color="#7c8aa5", width=3, head=12) {
+function mapDrawArrow(ctx, x1, y1, x2, y2, color="#8691a7", width=3, head=12) {
   const angle = Math.atan2(y2 - y1, x2 - x1);
   ctx.save();
   ctx.strokeStyle = color;
@@ -610,112 +667,114 @@ function mapDrawArrow(ctx, x1, y1, x2, y2, color="#7c8aa5", width=3, head=12) {
 
   ctx.beginPath();
   ctx.moveTo(x2, y2);
-  ctx.lineTo(
-    x2 - head * Math.cos(angle - Math.PI / 6),
-    y2 - head * Math.sin(angle - Math.PI / 6)
-  );
-  ctx.lineTo(
-    x2 - head * Math.cos(angle + Math.PI / 6),
-    y2 - head * Math.sin(angle + Math.PI / 6)
-  );
+  ctx.lineTo(x2 - head * Math.cos(angle - Math.PI / 6), y2 - head * Math.sin(angle - Math.PI / 6));
+  ctx.lineTo(x2 - head * Math.cos(angle + Math.PI / 6), y2 - head * Math.sin(angle + Math.PI / 6));
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 }
 
-function mapDrawConnector(ctx, startX, startY, endX, endY, elbowY) {
-  ctx.save();
-  ctx.strokeStyle = "#8491a7";
-  ctx.lineWidth = 3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
+function mapDrawChip(ctx, text, centerX, y, maxWidth) {
+  ctx.font = "600 12px Arial, sans-serif";
+  const measured = Math.min(maxWidth, ctx.measureText(text).width + 24);
+  const x = centerX - measured / 2;
+  const h = 28;
 
-  ctx.beginPath();
-  ctx.moveTo(startX, startY);
-  ctx.lineTo(startX, elbowY);
-  ctx.lineTo(endX, elbowY);
+  mapRoundRect(ctx, x, y, measured, h, 14);
+  ctx.fillStyle = "#f1efff";
+  ctx.fill();
+
+  ctx.strokeStyle = "#ded9ff";
+  ctx.lineWidth = 1;
+  mapRoundRect(ctx, x, y, measured, h, 14);
   ctx.stroke();
-  ctx.restore();
 
-  mapDrawArrow(ctx, endX, elbowY, endX, endY, "#8491a7", 3, 13);
+  ctx.fillStyle = "#6656b8";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, centerX, y + h / 2 + 1);
 }
 
-function drawConceptMapToCanvas(canvas, mapData, scale=2) {
+function drawConceptMapToCanvas(canvas, mapData, options={}) {
+  const scale = options.scale || 2;
+  const responsive = options.responsive !== false;
   const branches = mapData.branches.slice(0, 5);
   const count = branches.length;
 
-  const logicalWidth = Math.max(1200, 260 * count);
-  const logicalHeight = 760;
+  const logicalWidth = Math.max(1180, 245 * count);
+  const logicalHeight = 860;
 
-  canvas.width = logicalWidth * scale;
-  canvas.height = logicalHeight * scale;
-  canvas.style.width = logicalWidth + "px";
-  canvas.style.height = logicalHeight + "px";
+  canvas.width = Math.round(logicalWidth * scale);
+  canvas.height = Math.round(logicalHeight * scale);
+
+  if (responsive) {
+    canvas.style.width = "100%";
+    canvas.style.height = "auto";
+    canvas.style.maxWidth = "100%";
+  } else {
+    canvas.style.width = logicalWidth + "px";
+    canvas.style.height = logicalHeight + "px";
+    canvas.style.maxWidth = "none";
+  }
 
   const ctx = canvas.getContext("2d");
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
-  // Background
-  const bg = ctx.createLinearGradient(0, 0, logicalWidth, logicalHeight);
-  bg.addColorStop(0, "#ffffff");
-  bg.addColorStop(1, "#f7f8fc");
-  ctx.fillStyle = bg;
+  const background = ctx.createLinearGradient(0, 0, logicalWidth, logicalHeight);
+  background.addColorStop(0, "#ffffff");
+  background.addColorStop(1, "#f7f8fc");
+  ctx.fillStyle = background;
   ctx.fillRect(0, 0, logicalWidth, logicalHeight);
 
-  // Small title
-  ctx.fillStyle = "#8b95a7";
-  ctx.font = "600 15px Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+
+  ctx.fillStyle = "#9aa3b2";
+  ctx.font = "700 13px Arial, sans-serif";
   ctx.fillText("MAPA CONCEPTUAL", logicalWidth / 2, 28);
 
   const centerX = logicalWidth / 2;
-
-  // Main topic node
-  const topicW = Math.min(430, Math.max(320, mapData.topic.length * 11 + 70));
-  const topicH = 92;
+  const topicW = Math.min(470, Math.max(330, mapData.topic.length * 11 + 80));
+  const topicH = 96;
+  const topicY = 66;
   const topicX = centerX - topicW / 2;
-  const topicY = 70;
 
   ctx.save();
   ctx.shadowColor = "rgba(91, 70, 180, .20)";
   ctx.shadowBlur = 28;
   ctx.shadowOffsetY = 10;
-  mapRoundRect(ctx, topicX, topicY, topicW, topicH, 26);
+  mapRoundRect(ctx, topicX, topicY, topicW, topicH, 28);
   const topicGradient = ctx.createLinearGradient(topicX, topicY, topicX + topicW, topicY + topicH);
   topicGradient.addColorStop(0, "#7c5cff");
-  topicGradient.addColorStop(1, "#6748dc");
+  topicGradient.addColorStop(1, "#5f44d4");
   ctx.fillStyle = topicGradient;
   ctx.fill();
   ctx.restore();
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "700 25px Arial, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
   mapDrawCenteredText(ctx, mapData.topic, centerX, topicY + topicH / 2 + 1, topicW - 54, 28, 3);
 
-  // Concept positions
-  const side = 115;
-  const conceptY = 285;
-  const conceptW = 190;
-  const conceptH = 72;
-  const explanationY = 490;
-  const explanationW = 220;
-  const explanationH = 150;
-  const trunkY = 220;
-
-  const xs = count === 1
+  const sideMargin = 118;
+  const branchXs = count === 1
     ? [centerX]
     : Array.from({length: count}, (_, i) =>
-        side + i * ((logicalWidth - side * 2) / (count - 1))
+        sideMargin + i * ((logicalWidth - sideMargin * 2) / (count - 1))
       );
 
-  // Main trunk from topic
+  const trunkY = 220;
+  const conceptY = 285;
+  const conceptW = 184;
+  const conceptH = 70;
+  const detailY = 455;
+  const detailW = 215;
+  const detailH = 260;
+
   ctx.save();
-  ctx.strokeStyle = "#8491a7";
+  ctx.strokeStyle = "#8c97aa";
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
+
   ctx.beginPath();
   ctx.moveTo(centerX, topicY + topicH);
   ctx.lineTo(centerX, trunkY);
@@ -723,29 +782,27 @@ function drawConceptMapToCanvas(canvas, mapData, scale=2) {
 
   if (count > 1) {
     ctx.beginPath();
-    ctx.moveTo(xs[0], trunkY);
-    ctx.lineTo(xs[xs.length - 1], trunkY);
+    ctx.moveTo(branchXs[0], trunkY);
+    ctx.lineTo(branchXs[branchXs.length - 1], trunkY);
     ctx.stroke();
   }
   ctx.restore();
 
   branches.forEach((branch, index) => {
-    const x = xs[index];
+    const x = branchXs[index];
 
-    // Arrows to concept
-    mapDrawArrow(ctx, x, trunkY, x, conceptY - 16, "#8491a7", 3, 13);
+    mapDrawArrow(ctx, x, trunkY, x, conceptY - 15, "#8c97aa", 3, 13);
 
-    // Concept node shadow + gradient
     const conceptX = x - conceptW / 2;
     ctx.save();
-    ctx.shadowColor = "rgba(82, 82, 160, .12)";
+    ctx.shadowColor = "rgba(72, 65, 150, .12)";
     ctx.shadowBlur = 18;
     ctx.shadowOffsetY = 7;
     mapRoundRect(ctx, conceptX, conceptY, conceptW, conceptH, 20);
-    const cg = ctx.createLinearGradient(conceptX, conceptY, conceptX + conceptW, conceptY + conceptH);
-    cg.addColorStop(0, "#eef2ff");
-    cg.addColorStop(1, "#e5e7ff");
-    ctx.fillStyle = cg;
+    const conceptGradient = ctx.createLinearGradient(conceptX, conceptY, conceptX + conceptW, conceptY + conceptH);
+    conceptGradient.addColorStop(0, "#eef0ff");
+    conceptGradient.addColorStop(1, "#e7e9ff");
+    ctx.fillStyle = conceptGradient;
     ctx.fill();
     ctx.restore();
 
@@ -756,80 +813,92 @@ function drawConceptMapToCanvas(canvas, mapData, scale=2) {
 
     ctx.fillStyle = "#37306f";
     ctx.font = "700 18px Arial, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    mapDrawCenteredText(ctx, branch.word, x, conceptY + conceptH / 2, conceptW - 28, 20, 2);
+    mapDrawCenteredText(ctx, branch.word, x, conceptY + conceptH / 2, conceptW - 26, 20, 2);
 
-    // Arrow to explanation
-    mapDrawArrow(
-      ctx,
-      x,
-      conceptY + conceptH,
-      x,
-      explanationY - 16,
-      "#9aa5b6",
-      2.5,
-      12
-    );
+    mapDrawArrow(ctx, x, conceptY + conceptH, x, detailY - 15, "#a0a9b8", 2.5, 12);
 
-    // Explanation card
-    const exX = x - explanationW / 2;
+    const detailX = x - detailW / 2;
     ctx.save();
     ctx.shadowColor = "rgba(15, 23, 42, .08)";
-    ctx.shadowBlur = 16;
+    ctx.shadowBlur = 18;
     ctx.shadowOffsetY = 7;
-    mapRoundRect(ctx, exX, explanationY, explanationW, explanationH, 20);
+    mapRoundRect(ctx, detailX, detailY, detailW, detailH, 22);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
     ctx.restore();
 
-    ctx.strokeStyle = "#d9deea";
+    ctx.strokeStyle = "#dce1eb";
     ctx.lineWidth = 2;
-    mapRoundRect(ctx, exX, explanationY, explanationW, explanationH, 20);
+    mapRoundRect(ctx, detailX, detailY, detailW, detailH, 22);
     ctx.stroke();
 
+    // small heading
     ctx.fillStyle = "#7c5cff";
     ctx.beginPath();
-    ctx.arc(exX + 24, explanationY + 24, 5, 0, Math.PI * 2);
+    ctx.arc(detailX + 24, detailY + 25, 5, 0, Math.PI * 2);
     ctx.fill();
 
+    ctx.fillStyle = "#8590a1";
+    ctx.font = "700 10px Arial, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("IDEA PRINCIPAL", detailX + 38, detailY + 26);
+
+    ctx.textAlign = "center";
     ctx.fillStyle = "#334155";
     ctx.font = "15px Arial, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    const evidence = shortenMapEvidence(branch.evidence, 20);
     mapDrawCenteredText(
       ctx,
-      evidence,
+      shortenMapEvidence(branch.evidence, 24),
       x,
-      explanationY + 65,
-      explanationW - 34,
+      detailY + 91,
+      detailW - 30,
       20,
-      4
+      5
     );
 
-    if (branch.links?.length) {
-      ctx.fillStyle = "#8491a7";
-      ctx.font = "600 11px Arial, sans-serif";
+    if (branch.secondaryEvidence) {
+      ctx.fillStyle = "#eef0f4";
+      ctx.fillRect(detailX + 22, detailY + 148, detailW - 44, 1);
+
+      ctx.fillStyle = "#7f8998";
+      ctx.font = "700 10px Arial, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("TAMBIÉN", detailX + 22, detailY + 168);
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#596579";
+      ctx.font = "13px Arial, sans-serif";
       mapDrawCenteredText(
         ctx,
-        "Relacionado: " + branch.links.slice(0, 3).join(" · "),
+        shortenMapEvidence(branch.secondaryEvidence, 13),
         x,
-        explanationY + explanationH - 22,
-        explanationW - 30,
-        15,
-        2
+        detailY + 197,
+        detailW - 32,
+        17,
+        3
       );
+    }
+
+    const chips = (branch.links || []).slice(0, 3);
+    if (chips.length) {
+      const chipYStart = detailY + detailH - 38;
+      if (chips.length === 1) {
+        mapDrawChip(ctx, chips[0], x, chipYStart, detailW - 24);
+      } else {
+        ctx.font = "600 11px Arial, sans-serif";
+        ctx.fillStyle = "#8f98a7";
+        ctx.textAlign = "center";
+        ctx.fillText("Relacionado: " + chips.join(" · "), x, detailY + detailH - 20);
+      }
     }
   });
 
-  // Footer line
-  ctx.fillStyle = "#a0a8b5";
+  ctx.fillStyle = "#a6adba";
   ctx.font = "12px Arial, sans-serif";
   ctx.textAlign = "right";
-  ctx.fillText("EscuchaMapa", logicalWidth - 34, logicalHeight - 24);
+  ctx.fillText("EscuchaMapa", logicalWidth - 30, logicalHeight - 24);
 
-  state.currentMapCanvas = canvas;
+  return { logicalWidth, logicalHeight };
 }
 
 function renderConceptMap(mapData) {
@@ -850,7 +919,8 @@ function renderConceptMap(mapData) {
   canvas.setAttribute("aria-label", "Mapa conceptual");
   box.appendChild(canvas);
 
-  drawConceptMapToCanvas(canvas, mapData, 2);
+  drawConceptMapToCanvas(canvas, mapData, { scale: 2, responsive: true });
+  state.currentMapCanvas = canvas;
 }
 
 function updateInsights(showFeedback=false) {
@@ -1174,16 +1244,13 @@ function exportMapPng() {
   updateInsights();
 
   const data = state.currentMap;
-  const sourceCanvas = state.currentMapCanvas || $("conceptMap").querySelector("canvas.concept-map-canvas");
-
-  if (!data || !data.branches?.length || !sourceCanvas) {
+  if (!data || !data.branches?.length) {
     alert("Todavía no hay suficiente contenido para descargar un mapa.");
     return;
   }
 
-  // Re-render in high resolution for a sharp exported PNG.
   const exportCanvas = document.createElement("canvas");
-  drawConceptMapToCanvas(exportCanvas, data, 3);
+  drawConceptMapToCanvas(exportCanvas, data, { scale: 3, responsive: false });
 
   exportCanvas.toBlob(blob => {
     if (!blob) {
