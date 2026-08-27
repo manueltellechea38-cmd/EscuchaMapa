@@ -28,7 +28,11 @@ const state = {
   translationSource: "",
   showingTranslation: false,
   materialSources: [],
-  analysisMode: "listen"
+  analysisMode: "listen",
+  studyPurpose: "understand",
+  currentStudy: {points:[], questions:[]},
+  currentSummary: "",
+  currentProfile: null
 };
 
 const STOP = new Set("a al algo algunas algunos ante antes como con contra cual cuando de del desde donde el ella ellas ellos en entre era es esa esas ese eso esos esta estaba estado estas este esto estos fue ha hay la las le les lo los mas me mi mis muy no nos o para pero por porque que se ser si sin sobre su sus tambien te tener tiene todo tu un una uno unos y ya yo eh emm mmm bueno tipo osea the and to of in is it that for on with as this be are was at or by an from not have has you we they he she i so well like yeah okay ok um uh".split(" "));
@@ -62,13 +66,57 @@ function clean(text) {
     .trim();
 }
 
+function capitalizeFirst(text="") {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return value.charAt(0).toLocaleUpperCase() + value.slice(1);
+}
+
+function prettyConcept(text="") {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value) return "";
+  if (/^[A-ZÁÉÍÓÚÑ0-9]{2,}$/.test(value)) return value;
+  return capitalizeFirst(value);
+}
+
+function polishSentence(text="") {
+  let value = String(text || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+
+  if (!value) return "";
+  value = capitalizeFirst(value);
+  if (!/[.!?…]$/.test(value)) value += ".";
+  return value;
+}
+
+function originalWordForKey(text, key) {
+  const originals = String(text || "").match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]{2,}/g) || [];
+  const match = originals.find(token => norm(token) === key);
+  return match || key;
+}
+
 function keywordData(text, limit=12) {
   const counts = new Map();
-  for (const w of words(text)) counts.set(w, (counts.get(w) || 0) + 1);
+  const labels = new Map();
+  const originals = String(text || "").match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]{2,}/g) || [];
+
+  for (const token of originals) {
+    const key = norm(token);
+    if (key.length < 3 || STOP.has(key)) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    if (!labels.has(key)) labels.set(key, token);
+  }
+
   return [...counts.entries()]
     .sort((a,b) => b[1] - a[1] || b[0].length - a[0].length)
     .slice(0, limit)
-    .map(([word,count]) => ({word,count}));
+    .map(([word,count]) => ({
+      word,
+      label: prettyConcept(labels.get(word) || word),
+      count
+    }));
 }
 
 function detectLanguage(text) {
@@ -113,49 +161,93 @@ function languageLabel(code) {
   return "Sin detectar";
 }
 
-function buildStudyData(mapData, languageCode) {
+function buildStudyData(mapData, languageCode, units=analysisUnits(), profile=studyProfile()) {
   if (!mapData?.branches?.length) return {points:[], questions:[]};
 
   const isEnglish = languageCode === "en-US";
-  const points = mapData.branches.map(branch => {
-    let text = branch.word + ": " + shortenMapEvidence(branch.evidence, 24);
+  const points = [];
+  const questions = [];
+
+  for (const branch of mapData.branches) {
+    let point = branch.word + ": " + polishSentence(branch.evidence);
     if (branch.links?.length) {
-      text += isEnglish
-        ? " Related: " + branch.links.slice(0, 3).join(", ") + "."
-        : " Relacionado con: " + branch.links.slice(0, 3).join(", ") + ".";
+      point += isEnglish
+        ? " Related to " + branch.links.join(", ") + "."
+        : " Se relaciona con " + branch.links.join(", ") + ".";
     }
-    return text;
-  });
+    points.push(point);
 
-  const questions = mapData.branches.slice(0, 4).map(branch =>
-    isEnglish
-      ? "How would you explain " + branch.word + " in your own words?"
-      : "¿Cómo explicarías " + branch.word + " con tus propias palabras?"
-  );
-
-  if (mapData.branches.length >= 2) {
-    const a = mapData.branches[0].word;
-    const b = mapData.branches[1].word;
-    questions.push(
-      isEnglish
-        ? "What relationship can you identify between " + a + " and " + b + "?"
-        : "¿Qué relación podés encontrar entre " + a + " y " + b + "?"
-    );
+    questions.push({
+      question: isEnglish
+        ? "How would you explain " + branch.word + " in your own words?"
+        : "¿Cómo explicarías " + branch.word + " con tus propias palabras?",
+      answer: polishSentence(branch.evidence)
+    });
   }
 
-  return {points, questions:questions.slice(0, 5)};
+  const rankedExtra = units
+    .map(polishSentence)
+    .filter(unit => words(unit).length >= 5)
+    .filter(unit => !points.some(point => mapSimilarity(point, unit) > .62));
+
+  for (const unit of rankedExtra) {
+    if (points.length >= profile.points) break;
+    points.push(unit);
+  }
+
+  let extraIndex = 0;
+  while (questions.length < profile.questions && extraIndex < rankedExtra.length) {
+    const unit = rankedExtra[extraIndex++];
+    const key = keywordData(unit, 1)[0]?.label || (isEnglish ? "this idea" : "esta idea");
+
+    questions.push({
+      question:
+        profile.purpose === "exam"
+          ? (isEnglish
+              ? "What should you remember about " + key + " for an exam?"
+              : "¿Qué deberías recordar sobre " + key + " para una prueba?")
+          : (isEnglish
+              ? "What is the main idea related to " + key + "?"
+              : "¿Cuál es la idea principal relacionada con " + key + "?"),
+      answer: unit
+    });
+  }
+
+  if (questions.length < profile.questions && mapData.branches.length >= 2) {
+    const a = mapData.branches[0];
+    const b = mapData.branches[1];
+    questions.push({
+      question:isEnglish
+        ? "What relationship can you identify between " + a.word + " and " + b.word + "?"
+        : "¿Qué relación podés encontrar entre " + a.word + " y " + b.word + "?",
+      answer:isEnglish
+        ? polishSentence(a.evidence + " " + b.evidence)
+        : polishSentence(a.evidence + " " + b.evidence)
+    });
+  }
+
+  return {
+    points:points.slice(0, profile.points),
+    questions:questions.slice(0, profile.questions)
+  };
 }
 
 function renderStudy(studyData) {
   const points = studyData?.points || [];
   const questions = studyData?.questions || [];
+  state.currentStudy = studyData || {points:[], questions:[]};
 
   $("studyPoints").innerHTML = points.length
     ? "<ol>" + points.map(item => "<li>" + esc(item) + "</li>").join("") + "</ol>"
     : '<span class="history-empty">Todavía no hay suficiente contenido.</span>';
 
   $("studyQuestions").innerHTML = questions.length
-    ? "<ol>" + questions.map(item => "<li>" + esc(item) + "</li>").join("") + "</ol>"
+    ? questions.map((item,index) =>
+        '<details class="qa-card">'
+        + '<summary><span>' + (index + 1) + '.</span>' + esc(item.question || item) + '</summary>'
+        + '<div class="qa-answer"><strong>Respuesta</strong><p>'
+        + esc(item.answer || "") + '</p></div></details>'
+      ).join("")
     : '<span class="history-empty">Todavía no hay preguntas.</span>';
 }
 
@@ -296,6 +388,21 @@ async function createTranslationEngine(sourceCode, targetCode) {
   };
 }
 
+function decodeTranslatedText(text="") {
+  const area = document.createElement("textarea");
+  area.innerHTML = String(text || "");
+  return area.value.replace(/\s+/g, " ").trim();
+}
+
+async function translateConcept(engine, text, sourceCode, targetCode) {
+  const sourcePrefix = sourceCode === "es" ? "Concepto de estudio: " : "Study concept: ";
+  const translated = decodeTranslatedText(await engine.translate(sourcePrefix + text));
+  const afterColon = translated.includes(":")
+    ? translated.slice(translated.indexOf(":") + 1).trim()
+    : translated;
+  return prettyConcept(afterColon || translated);
+}
+
 async function translateGeneratedContent() {
   const units = analysisUnits();
   const fullText = units.join(" ");
@@ -313,9 +420,13 @@ async function translateGeneratedContent() {
     return;
   }
 
-  const originalMap = state.currentMap || buildMapData(units, $("detectedTopic").textContent || "Tema principal");
-  const originalSummary = createSummary(units);
-  const originalStudy = buildStudyData(originalMap, detected);
+  const profile = state.currentProfile || studyProfile();
+  const originalMap = state.currentMap
+    || buildMapData(units, $("detectedTopic").textContent || "Tema principal", profile.branches);
+  const originalSummary = state.currentSummary || createSummary(units, profile);
+  const originalStudy = state.currentStudy?.questions?.length
+    ? state.currentStudy
+    : buildStudyData(originalMap, detected, units, profile);
 
   if (!originalMap?.branches?.length) {
     alert("Necesito un poco más de contenido antes de traducir los resultados.");
@@ -326,7 +437,7 @@ async function translateGeneratedContent() {
   const oldLabel = button.textContent;
   button.disabled = true;
   button.textContent = "Traduciendo…";
-  $("translationStatus").textContent = "Traduciendo resumen, mapa y material de estudio…";
+  $("translationStatus").textContent = "Traduciendo resumen, mapa, conceptos y respuestas…";
 
   let engine = null;
 
@@ -334,40 +445,52 @@ async function translateGeneratedContent() {
     engine = await createTranslationEngine(sourceCode, targetCode);
 
     const translatedMap = {
-      topic: await engine.translate(originalMap.topic),
+      topic: prettyConcept(decodeTranslatedText(await engine.translate(originalMap.topic))),
       branches: []
     };
 
     for (const branch of originalMap.branches) {
       translatedMap.branches.push({
-        word: await engine.translate(branch.word),
-        evidence: await engine.translate(branch.evidence),
+        word: await translateConcept(engine, branch.word, sourceCode, targetCode),
+        evidence: polishSentence(decodeTranslatedText(await engine.translate(branch.evidence))),
         secondaryEvidence: branch.secondaryEvidence
-          ? await engine.translate(branch.secondaryEvidence)
+          ? polishSentence(decodeTranslatedText(await engine.translate(branch.secondaryEvidence)))
           : "",
         links: branch.links?.length
-          ? await Promise.all(branch.links.map(link => engine.translate(link)))
+          ? await Promise.all(branch.links.map(link =>
+              translateConcept(engine, link, sourceCode, targetCode)
+            ))
           : []
       });
     }
 
     const translatedStudy = {
-      points: await Promise.all(originalStudy.points.map(item => engine.translate(item))),
-      questions: await Promise.all(originalStudy.questions.map(item => engine.translate(item)))
+      points: await Promise.all(originalStudy.points.map(async item =>
+        polishSentence(decodeTranslatedText(await engine.translate(item)))
+      )),
+      questions: await Promise.all(originalStudy.questions.map(async item => ({
+        question: polishSentence(decodeTranslatedText(await engine.translate(item.question || item))),
+        answer: item.answer
+          ? polishSentence(decodeTranslatedText(await engine.translate(item.answer)))
+          : ""
+      })))
     };
 
-    const translatedSummary = await engine.translate(originalSummary);
+    const translatedSummary = decodeTranslatedText(await engine.translate(originalSummary))
+      .split(/\n{2,}/)
+      .map(polishSentence)
+      .join("\n\n");
 
     state.translatedMap = translatedMap;
     state.translatedStudy = translatedStudy;
     state.translatedSummary = translatedSummary;
-    state.translationSource = norm(fullText).slice(0, 1600);
+    state.translationSource = norm(fullText).slice(0,1600);
     state.showingTranslation = true;
 
     $("detectedTopic").textContent = translatedMap.topic;
     $("summary").textContent = translatedSummary;
     $("keywords").innerHTML = translatedMap.branches
-      .map(branch => '<span class="chip">' + esc(branch.word) + "</span>")
+      .map(branch => '<span class="chip">' + esc(prettyConcept(branch.word)) + "</span>")
       .join("");
 
     renderConceptMap(translatedMap);
@@ -377,13 +500,13 @@ async function translateGeneratedContent() {
     $("translationStatus").textContent =
       engine.type === "browser"
         ? "Traducido dentro del dispositivo."
-        : "Traducido dentro de EscuchaMapa usando traducción online.";
+        : "Traducción lista dentro de EscuchaMapa.";
     toast("Resultados traducidos");
   } catch (error) {
     console.warn("Traducción:", error);
     $("translationStatus").textContent =
       "No pude completar la traducción. Revisá tu conexión e intentá nuevamente.";
-    alert("No pude traducir dentro de la app en este momento. Probá nuevamente con conexión a internet.");
+    alert("No pude completar la traducción en este momento.");
   } finally {
     engine?.destroy?.();
     button.disabled = false;
@@ -850,27 +973,140 @@ function renderRaw() {
     : '<span class="history-empty">Todavía no hay contenido.</span>';
 }
 
-function createSummary(units) {
-  const useful = units.filter(unit => words(unit).length >= 4);
+function analysisSizeInfo() {
+  if (state.analysisMode !== "material") {
+    const totalWords = analysisUnits().reduce((sum, unit) => sum + words(unit, true).length, 0);
+    return {pages:Math.max(1, Math.ceil(totalWords / 430)), realPdfPages:0, estimated:true};
+  }
+
+  const active = state.materialSources.filter(source => source.enabled !== false);
+  let realPdfPages = 0;
+  let otherWords = 0;
+
+  for (const source of active) {
+    if (source.type === "pdf" && source.pageCount) realPdfPages += source.pageCount;
+    else otherWords += words(source.text || "", true).length;
+  }
+
+  const estimatedOtherPages = Math.ceil(otherWords / 430);
+  return {
+    pages: Math.max(1, realPdfPages + estimatedOtherPages),
+    realPdfPages,
+    estimated: estimatedOtherPages > 0
+  };
+}
+
+function studyProfile() {
+  const size = analysisSizeInfo();
+  const pages = size.pages;
+
+  let profile =
+    pages <= 5  ? {summaryUnits:3, paragraphs:2, points:6, questions:5, branches:3} :
+    pages <= 15 ? {summaryUnits:6, paragraphs:3, points:8, questions:7, branches:4} :
+    pages <= 30 ? {summaryUnits:9, paragraphs:4, points:10, questions:9, branches:5} :
+    pages <= 60 ? {summaryUnits:12, paragraphs:5, points:12, questions:11, branches:6} :
+                  {summaryUnits:16, paragraphs:6, points:15, questions:14, branches:6};
+
+  const purpose = state.studyPurpose || "understand";
+
+  if (purpose === "quick") {
+    profile.summaryUnits = Math.max(2, Math.ceil(profile.summaryUnits * .55));
+    profile.paragraphs = Math.max(1, Math.ceil(profile.paragraphs * .6));
+    profile.points = Math.max(4, profile.points - 3);
+    profile.questions = Math.max(3, profile.questions - 3);
+    profile.branches = Math.max(3, profile.branches - 1);
+  } else if (purpose === "review") {
+    profile.points += 2;
+    profile.questions += 2;
+  } else if (purpose === "exam") {
+    profile.questions += 4;
+    profile.points += 1;
+  } else if (purpose === "deep") {
+    profile.summaryUnits += 4;
+    profile.paragraphs += 2;
+    profile.points += 4;
+    profile.questions += 4;
+    profile.branches = Math.min(6, profile.branches + 1);
+  } else {
+    profile.summaryUnits += 2;
+    profile.paragraphs += 1;
+  }
+
+  return {...profile, pages, purpose, ...size};
+}
+
+function purposeLabel(value) {
+  return ({
+    understand:"Entender bien el tema",
+    review:"Repasar",
+    exam:"Preparar una prueba",
+    quick:"Resumen rápido",
+    deep:"Estudiar en profundidad"
+  })[value] || "Entender bien el tema";
+}
+
+function renderStudyPlan() {
+  const card = $("studyPlanCard");
+  if (!card) return;
+
+  const active = state.materialSources.filter(source => source.enabled !== false);
+  if (!active.length) {
+    $("studyPlanTitle").textContent = "Agregá material para calcularlo";
+    $("studyPlanDetails").textContent =
+      "La cantidad de resumen, conceptos y preguntas se adapta al tamaño del material.";
+    return;
+  }
+
+  const profile = studyProfile();
+  const pageText = profile.realPdfPages
+    ? profile.realPdfPages + (profile.realPdfPages === 1 ? " página PDF" : " páginas PDF")
+    : "aprox. " + profile.pages + (profile.pages === 1 ? " página" : " páginas");
+
+  $("studyPlanTitle").textContent = pageText + " · " + purposeLabel(profile.purpose);
+  $("studyPlanDetails").textContent =
+    profile.paragraphs + " bloques de resumen · "
+    + profile.points + " puntos clave · "
+    + profile.questions + " preguntas con respuesta · "
+    + profile.branches + " conceptos principales.";
+}
+
+function createSummary(units, profile=studyProfile()) {
+  const useful = units
+    .map(polishSentence)
+    .filter(unit => words(unit).length >= 4);
+
   if (!useful.length) return "";
   if (useful.length === 1) return useful[0];
 
   const fullText = useful.join(" ");
-  const weights = new Map(keywordData(fullText, 20).map(k => [k.word, k.count]));
+  const weights = new Map(keywordData(fullText, 30).map(k => [k.word, k.count]));
 
   const scored = useful.map((unit,index) => ({
     unit,
     index,
-    score: words(unit).reduce((sum,w) => sum + (weights.get(w) || 0), 0) / Math.max(1, words(unit).length)
+    score: words(unit).reduce((sum,w) => sum + (weights.get(w) || 0), 0)
+      / Math.max(1, words(unit).length)
   }));
 
-  const take = Math.min(4, Math.max(2, Math.ceil(useful.length * .28)));
-  return scored
+  const take = Math.min(useful.length, Math.max(2, profile.summaryUnits || 4));
+  const selected = scored
     .sort((a,b) => b.score - a.score)
     .slice(0, take)
     .sort((a,b) => a.index - b.index)
-    .map(x => x.unit)
-    .join(" ");
+    .map(x => x.unit);
+
+  const paragraphCount = Math.min(
+    selected.length,
+    Math.max(1, profile.paragraphs || 2)
+  );
+  const perParagraph = Math.ceil(selected.length / paragraphCount);
+  const paragraphs = [];
+
+  for (let i = 0; i < selected.length; i += perParagraph) {
+    paragraphs.push(selected.slice(i, i + perParagraph).join(" "));
+  }
+
+  return paragraphs.join("\n\n");
 }
 
 function relatedTerms(units, branchWord, limit=3) {
@@ -912,7 +1148,7 @@ function mapUnitScore(unit, keywordSet, frequency) {
   return keywordHits * 1.6 + repetition * .12 + lengthBonus;
 }
 
-function buildMapData(units, topic) {
+function buildMapData(units, topic, branchTarget=studyProfile().branches) {
   const usable = units
     .map(unit => String(unit || "").trim())
     .filter(unit => words(unit).length >= 3);
@@ -920,38 +1156,29 @@ function buildMapData(units, topic) {
   if (usable.length < 2) return null;
 
   const allText = usable.join(" ");
-  const keywordPool = keywordData(allText, 30);
+  const keywordPool = keywordData(allText, 36);
   if (keywordPool.length < 2) return null;
 
   const frequency = new Map(keywordPool.map(k => [k.word, k.count]));
   const keywordSet = new Set(keywordPool.map(k => k.word));
-
-  const desiredBranches =
-    usable.length >= 8 ? 5 :
-    usable.length >= 5 ? 4 :
-    usable.length >= 3 ? 3 : 2;
-
-  const candidateConcepts = keywordPool.filter(item => {
-    const appearsIn = usable.filter(unit => words(unit).includes(item.word)).length;
-    return appearsIn >= 1;
-  });
+  const desiredBranches = Math.max(2, Math.min(6, branchTarget || 4));
 
   const branches = [];
 
-  for (const candidate of candidateConcepts) {
+  for (const candidate of keywordPool) {
     if (branches.length >= desiredBranches) break;
 
     const matches = usable.filter(unit => words(unit).includes(candidate.word));
     if (!matches.length) continue;
 
     const ranked = matches
-      .map(unit => ({ unit, score: mapUnitScore(unit, keywordSet, frequency) }))
-      .sort((a, b) => b.score - a.score);
+      .map(unit => ({unit, score:mapUnitScore(unit, keywordSet, frequency)}))
+      .sort((a,b) => b.score - a.score);
 
-    const evidence = ranked[0]?.unit || matches[0];
+    const evidence = polishSentence(ranked[0]?.unit || matches[0]);
 
     const conceptTooSimilar = branches.some(branch =>
-      mapSimilarity(branch.word, candidate.word) > .7 ||
+      mapSimilarity(branch.word, candidate.label) > .7 ||
       mapSimilarity(branch.evidence, evidence) > .66
     );
     if (conceptTooSimilar) continue;
@@ -959,25 +1186,24 @@ function buildMapData(units, topic) {
     const relatedCounts = new Map();
     for (const unit of matches) {
       for (const w of words(unit)) {
-        if (w === candidate.word) continue;
-        if (!keywordSet.has(w)) continue;
+        if (w === candidate.word || !keywordSet.has(w)) continue;
         relatedCounts.set(w, (relatedCounts.get(w) || 0) + (frequency.get(w) || 1));
       }
     }
 
     const related = [...relatedCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([word]) => word)
-      .filter(word => !branches.some(branch => branch.word === word))
-      .slice(0, 4);
+      .sort((a,b) => b[1] - a[1])
+      .map(([key]) => prettyConcept(originalWordForKey(allText, key)))
+      .filter(label => !branches.some(branch => norm(branch.word) === norm(label)))
+      .slice(0, 3);
 
     const secondaryEvidence = ranked
       .slice(1)
-      .map(item => item.unit)
+      .map(item => polishSentence(item.unit))
       .find(unit => mapSimilarity(unit, evidence) < .58);
 
     branches.push({
-      word: candidate.word,
+      word: prettyConcept(candidate.label),
       evidence,
       secondaryEvidence: secondaryEvidence || "",
       links: related
@@ -987,20 +1213,20 @@ function buildMapData(units, topic) {
   if (branches.length < 2) {
     const fallback = usable
       .slice(0, Math.min(desiredBranches, usable.length))
-      .map((unit, index) => {
+      .map((unit,index) => {
         const localKeys = keywordData(unit, 5);
         return {
-          word: localKeys[0]?.word || ("Idea " + (index + 1)),
-          evidence: unit,
+          word: localKeys[0]?.label || ("Idea " + (index + 1)),
+          evidence: polishSentence(unit),
           secondaryEvidence: "",
-          links: localKeys.slice(1, 4).map(k => k.word)
+          links: localKeys.slice(1,4).map(k => k.label)
         };
       });
 
-    return { topic, branches: fallback };
+    return {topic:prettyConcept(topic), branches:fallback};
   }
 
-  return { topic, branches };
+  return {topic:prettyConcept(topic), branches};
 }
 
 function shortenMapEvidence(text, maxWords=22) {
@@ -1102,24 +1328,22 @@ function mapDrawChip(ctx, text, centerX, y, maxWidth) {
 function drawConceptMapToCanvas(canvas, mapData, options={}) {
   const scale = options.scale || 2;
   const responsive = options.responsive !== false;
-  const branches = mapData.branches.slice(0, 5);
+  const branches = mapData.branches.slice(0, 6);
   const count = branches.length;
 
-  const logicalWidth = Math.max(1180, 245 * count);
-  const logicalHeight = 860;
+  const logicalWidth = 1080;
+  const columns = Math.min(3, Math.max(1, count));
+  const rows = Math.ceil(count / 3);
+  const cardW = 300;
+  const cardH = 250;
+  const rowGap = 105;
+  const logicalHeight = 245 + rows * (cardH + rowGap) + 35;
 
-  canvas.width = Math.round(logicalWidth * scale);
-  canvas.height = Math.round(logicalHeight * scale);
-
-  if (responsive) {
-    canvas.style.width = "100%";
-    canvas.style.height = "auto";
-    canvas.style.maxWidth = "100%";
-  } else {
-    canvas.style.width = logicalWidth + "px";
-    canvas.style.height = logicalHeight + "px";
-    canvas.style.maxWidth = "none";
-  }
+  canvas.width = logicalWidth * scale;
+  canvas.height = logicalHeight * scale;
+  canvas.style.width = logicalWidth + "px";
+  canvas.style.height = logicalHeight + "px";
+  canvas.style.maxWidth = "none";
 
   const ctx = canvas.getContext("2d");
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -1132,177 +1356,133 @@ function drawConceptMapToCanvas(canvas, mapData, options={}) {
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-
   ctx.fillStyle = "#9aa3b2";
   ctx.font = "700 13px Arial, sans-serif";
   ctx.fillText("MAPA CONCEPTUAL", logicalWidth / 2, 28);
 
   const centerX = logicalWidth / 2;
-  const topicW = Math.min(470, Math.max(330, mapData.topic.length * 11 + 80));
+  const topic = prettyConcept(mapData.topic);
+  const topicW = Math.min(500, Math.max(350, topic.length * 11 + 90));
   const topicH = 96;
-  const topicY = 66;
+  const topicY = 62;
   const topicX = centerX - topicW / 2;
 
   ctx.save();
-  ctx.shadowColor = "rgba(91, 70, 180, .20)";
-  ctx.shadowBlur = 28;
-  ctx.shadowOffsetY = 10;
+  ctx.shadowColor = "rgba(91,70,180,.18)";
+  ctx.shadowBlur = 26;
+  ctx.shadowOffsetY = 9;
   mapRoundRect(ctx, topicX, topicY, topicW, topicH, 28);
-  const topicGradient = ctx.createLinearGradient(topicX, topicY, topicX + topicW, topicY + topicH);
-  topicGradient.addColorStop(0, "#7c5cff");
-  topicGradient.addColorStop(1, "#5f44d4");
-  ctx.fillStyle = topicGradient;
+  const tg = ctx.createLinearGradient(topicX, topicY, topicX + topicW, topicY + topicH);
+  tg.addColorStop(0, "#7c5cff");
+  tg.addColorStop(1, "#5f44d4");
+  ctx.fillStyle = tg;
   ctx.fill();
   ctx.restore();
 
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = "#fff";
   ctx.font = "700 25px Arial, sans-serif";
-  mapDrawCenteredText(ctx, mapData.topic, centerX, topicY + topicH / 2 + 1, topicW - 54, 28, 3);
+  mapDrawCenteredText(ctx, topic, centerX, topicY + topicH / 2 + 1, topicW - 54, 28, 3);
 
-  const sideMargin = 118;
-  const branchXs = count === 1
-    ? [centerX]
-    : Array.from({length: count}, (_, i) =>
-        sideMargin + i * ((logicalWidth - sideMargin * 2) / (count - 1))
-      );
+  const rootY = topicY + topicH;
+  const firstRowY = 240;
 
-  const trunkY = 220;
-  const conceptY = 285;
-  const conceptW = 184;
-  const conceptH = 70;
-  const detailY = 455;
-  const detailW = 215;
-  const detailH = 260;
+  branches.forEach((branch,index) => {
+    const row = Math.floor(index / 3);
+    const rowItems = Math.min(3, count - row * 3);
+    const col = index % 3;
+    const gap = rowItems === 1 ? 0 : 350;
+    const rowCenter = centerX;
+    const x = rowItems === 1
+      ? rowCenter
+      : rowCenter - ((rowItems - 1) * gap) / 2 + col * gap;
+    const y = firstRowY + row * (cardH + rowGap);
 
-  ctx.save();
-  ctx.strokeStyle = "#8c97aa";
-  ctx.lineWidth = 3;
-  ctx.lineCap = "round";
-
-  ctx.beginPath();
-  ctx.moveTo(centerX, topicY + topicH);
-  ctx.lineTo(centerX, trunkY);
-  ctx.stroke();
-
-  if (count > 1) {
+    const elbowY = row === 0 ? 195 : y - 48;
+    ctx.save();
+    ctx.strokeStyle = "#8e99aa";
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(branchXs[0], trunkY);
-    ctx.lineTo(branchXs[branchXs.length - 1], trunkY);
+    ctx.moveTo(centerX, rootY);
+    ctx.lineTo(centerX, elbowY);
+    ctx.lineTo(x, elbowY);
     ctx.stroke();
-  }
-  ctx.restore();
-
-  branches.forEach((branch, index) => {
-    const x = branchXs[index];
-
-    mapDrawArrow(ctx, x, trunkY, x, conceptY - 15, "#8c97aa", 3, 13);
-
-    const conceptX = x - conceptW / 2;
-    ctx.save();
-    ctx.shadowColor = "rgba(72, 65, 150, .12)";
-    ctx.shadowBlur = 18;
-    ctx.shadowOffsetY = 7;
-    mapRoundRect(ctx, conceptX, conceptY, conceptW, conceptH, 20);
-    const conceptGradient = ctx.createLinearGradient(conceptX, conceptY, conceptX + conceptW, conceptY + conceptH);
-    conceptGradient.addColorStop(0, "#eef0ff");
-    conceptGradient.addColorStop(1, "#e7e9ff");
-    ctx.fillStyle = conceptGradient;
-    ctx.fill();
     ctx.restore();
+    mapDrawArrow(ctx, x, elbowY, x, y - 12, "#8e99aa", 2.6, 12);
 
-    ctx.strokeStyle = "#8b87e8";
-    ctx.lineWidth = 2;
-    mapRoundRect(ctx, conceptX, conceptY, conceptW, conceptH, 20);
-    ctx.stroke();
+    const cardX = x - cardW / 2;
 
-    ctx.fillStyle = "#37306f";
-    ctx.font = "700 18px Arial, sans-serif";
-    mapDrawCenteredText(ctx, branch.word, x, conceptY + conceptH / 2, conceptW - 26, 20, 2);
-
-    mapDrawArrow(ctx, x, conceptY + conceptH, x, detailY - 15, "#a0a9b8", 2.5, 12);
-
-    const detailX = x - detailW / 2;
     ctx.save();
-    ctx.shadowColor = "rgba(15, 23, 42, .08)";
+    ctx.shadowColor = "rgba(15,23,42,.09)";
     ctx.shadowBlur = 18;
     ctx.shadowOffsetY = 7;
-    mapRoundRect(ctx, detailX, detailY, detailW, detailH, 22);
+    mapRoundRect(ctx, cardX, y, cardW, cardH, 24);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
     ctx.restore();
 
     ctx.strokeStyle = "#dce1eb";
     ctx.lineWidth = 2;
-    mapRoundRect(ctx, detailX, detailY, detailW, detailH, 22);
+    mapRoundRect(ctx, cardX, y, cardW, cardH, 24);
     ctx.stroke();
 
-    // small heading
-    ctx.fillStyle = "#7c5cff";
-    ctx.beginPath();
-    ctx.arc(detailX + 24, detailY + 25, 5, 0, Math.PI * 2);
+    const bubbleW = cardW - 36;
+    const bubbleH = 58;
+    const bubbleX = x - bubbleW / 2;
+    const bubbleY = y + 18;
+
+    const bg = ctx.createLinearGradient(bubbleX, bubbleY, bubbleX + bubbleW, bubbleY + bubbleH);
+    bg.addColorStop(0, "#eeefff");
+    bg.addColorStop(1, "#e6e8ff");
+    mapRoundRect(ctx, bubbleX, bubbleY, bubbleW, bubbleH, 18);
+    ctx.fillStyle = bg;
     ctx.fill();
+    ctx.strokeStyle = "#a09cf0";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = "#3d3676";
+    ctx.font = "700 18px Arial, sans-serif";
+    mapDrawCenteredText(ctx, prettyConcept(branch.word), x, bubbleY + bubbleH / 2, bubbleW - 28, 20, 2);
 
     ctx.fillStyle = "#8590a1";
     ctx.font = "700 10px Arial, sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText("IDEA PRINCIPAL", detailX + 38, detailY + 26);
+    ctx.fillText("IDEA PRINCIPAL", cardX + 24, y + 103);
 
     ctx.textAlign = "center";
-    ctx.fillStyle = "#334155";
-    ctx.font = "15px Arial, sans-serif";
+    ctx.fillStyle = "#344054";
+    ctx.font = "14px Arial, sans-serif";
     mapDrawCenteredText(
       ctx,
-      shortenMapEvidence(branch.evidence, 24),
+      polishSentence(branch.evidence),
       x,
-      detailY + 91,
-      detailW - 30,
-      20,
+      y + 150,
+      cardW - 42,
+      19,
       5
     );
 
-    if (branch.secondaryEvidence) {
-      ctx.fillStyle = "#eef0f4";
-      ctx.fillRect(detailX + 22, detailY + 148, detailW - 44, 1);
-
+    if (branch.links?.length) {
+      ctx.fillStyle = "#f0f1f5";
+      ctx.fillRect(cardX + 24, y + cardH - 54, cardW - 48, 1);
       ctx.fillStyle = "#7f8998";
-      ctx.font = "700 10px Arial, sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText("TAMBIÉN", detailX + 22, detailY + 168);
-
+      ctx.font = "600 11px Arial, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillStyle = "#596579";
-      ctx.font = "13px Arial, sans-serif";
-      mapDrawCenteredText(
-        ctx,
-        shortenMapEvidence(branch.secondaryEvidence, 13),
+      ctx.fillText(
+        "Relacionado: " + branch.links.map(prettyConcept).join(" · "),
         x,
-        detailY + 197,
-        detailW - 32,
-        17,
-        3
+        y + cardH - 27
       );
-    }
-
-    const chips = (branch.links || []).slice(0, 3);
-    if (chips.length) {
-      const chipYStart = detailY + detailH - 38;
-      if (chips.length === 1) {
-        mapDrawChip(ctx, chips[0], x, chipYStart, detailW - 24);
-      } else {
-        ctx.font = "600 11px Arial, sans-serif";
-        ctx.fillStyle = "#8f98a7";
-        ctx.textAlign = "center";
-        ctx.fillText("Relacionado: " + chips.join(" · "), x, detailY + detailH - 20);
-      }
     }
   });
 
   ctx.fillStyle = "#a6adba";
   ctx.font = "12px Arial, sans-serif";
   ctx.textAlign = "right";
-  ctx.fillText("EscuchaMapa", logicalWidth - 30, logicalHeight - 24);
+  ctx.fillText("EscuchaMapa", logicalWidth - 28, logicalHeight - 18);
 
-  return { logicalWidth, logicalHeight };
+  return {logicalWidth, logicalHeight};
 }
 
 function renderConceptMap(mapData) {
@@ -1330,24 +1510,36 @@ function renderConceptMap(mapData) {
 function updateInsights(showFeedback=false) {
   const units = analysisUnits();
   const fullText = units.join(" ");
-  const keywords = keywordData(fullText, 9);
+  const keywords = keywordData(fullText, 12);
   const manual = state.analysisMode === "listen" ? $("topicInput").value.trim() : "";
+  const profile = studyProfile();
 
+  state.currentProfile = profile;
   $("analysisSourceLabel").textContent = analysisSourceName();
 
   $("keywords").innerHTML = keywords.length
-    ? keywords.map(item => '<span class="chip">' + esc(item.word) + '</span>').join("")
+    ? keywords.map(item => '<span class="chip">' + esc(item.label) + '</span>').join("")
     : '<span class="history-empty">Sin conceptos todavía.</span>';
 
-  const topic = manual || keywords.slice(0,3).map(item => item.word).join(" · ") || "Tema principal";
-  $("detectedTopic").textContent = manual || keywords.slice(0,3).map(item => item.word).join(" · ") || "Todavía no hay suficiente texto";
-  $("summary").textContent = createSummary(units) || "Todavía no hay suficiente texto.";
+  const topic = manual
+    || keywords.slice(0,3).map(item => item.label).join(" · ")
+    || "Tema principal";
 
-  const mapData = buildMapData(units, topic);
+  $("detectedTopic").textContent = prettyConcept(
+    manual || keywords.slice(0,3).map(item => item.label).join(" · ")
+    || "Todavía no hay suficiente texto"
+  );
+
+  const summaryText = createSummary(units, profile) || "Todavía no hay suficiente texto.";
+  state.currentSummary = summaryText;
+  $("summary").textContent = summaryText;
+
+  const mapData = buildMapData(units, topic, profile.branches);
   renderConceptMap(mapData);
 
   const detectedLanguage = updateLanguageTools(fullText);
-  renderStudy(buildStudyData(mapData, detectedLanguage));
+  const study = buildStudyData(mapData, detectedLanguage, units, profile);
+  renderStudy(study);
 
   state.showingTranslation = false;
   $("showOriginalMapBtn").classList.add("hidden");
@@ -1602,19 +1794,24 @@ function renderMaterialSources() {
       '<label class="source-toggle"><input type="checkbox" ' + (source.enabled === false ? "" : "checked") + '><span></span></label>'
       + '<div class="source-type">' + esc(materialIcon(source.type || "text")) + '</div>'
       + '<div class="source-info"><strong>' + esc(source.name) + '</strong>'
-      + '<small>' + source.text.length.toLocaleString() + ' caracteres</small></div>'
+      + '<small>' + (source.type === "pdf" && source.pageCount
+        ? source.pageCount + (source.pageCount === 1 ? " página" : " páginas")
+        : (source.pageCount ? "≈ " + source.pageCount + (source.pageCount === 1 ? " página" : " páginas") : source.text.length.toLocaleString() + " caracteres"))
+      + '</small></div>'
       + '<button class="ghost source-remove">Quitar</button>';
 
     row.querySelector("input").onchange = event => {
       source.enabled = event.target.checked;
       row.classList.toggle("disabled", !source.enabled);
       persistMaterialSources();
+      renderStudyPlan();
     };
 
     row.querySelector(".source-remove").onclick = async () => {
       state.materialSources = state.materialSources.filter(item => item.id !== source.id);
       await persistMaterialSources();
       renderMaterialSources();
+      renderStudyPlan();
       if (state.analysisMode === "material") updateInsights();
     };
 
@@ -1638,7 +1835,7 @@ async function extractPdfText(file) {
     if (text) pages.push(text);
   }
 
-  return pages.join("\n\n");
+  return {text:pages.join("\n\n"), pageCount:pdf.numPages};
 }
 
 async function extractDocxText(file) {
@@ -1651,17 +1848,29 @@ async function extractDocxText(file) {
 async function extractFileText(file) {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
 
-  if (extension === "pdf") return {type:"pdf", text:await extractPdfText(file)};
-  if (extension === "docx") return {type:"docx", text:await extractDocxText(file)};
+  if (extension === "pdf") {
+    const result = await extractPdfText(file);
+    return {type:"pdf", text:result.text, pageCount:result.pageCount};
+  }
+
+  if (extension === "docx") {
+    const text = await extractDocxText(file);
+    return {type:"docx", text, pageCount:Math.max(1, Math.ceil(words(text, true).length / 430))};
+  }
 
   const raw = await file.text();
 
   if (extension === "html" || extension === "htm") {
     const doc = new DOMParser().parseFromString(raw, "text/html");
-    return {type:"html", text:doc.body?.innerText || ""};
+    const text = doc.body?.innerText || "";
+    return {type:"html", text, pageCount:Math.max(1, Math.ceil(words(text, true).length / 430))};
   }
 
-  return {type:extension || "text", text:raw};
+  return {
+    type:extension || "text",
+    text:raw,
+    pageCount:Math.max(1, Math.ceil(words(raw, true).length / 430))
+  };
 }
 
 async function addFilesAsMaterials(files) {
@@ -1686,6 +1895,7 @@ async function addFilesAsMaterials(files) {
         name: file.name,
         type: result.type,
         text,
+        pageCount: result.pageCount || Math.max(1, Math.ceil(words(text, true).length / 430)),
         enabled: true,
         addedAt: Date.now()
       });
@@ -1698,6 +1908,7 @@ async function addFilesAsMaterials(files) {
 
   await persistMaterialSources();
   renderMaterialSources();
+  renderStudyPlan();
 
   $("materialImportStatus").textContent =
     added + (added === 1 ? " archivo agregado" : " archivos agregados")
@@ -1720,6 +1931,7 @@ async function addManualMaterial() {
     name: title,
     type: "text",
     text,
+    pageCount: Math.max(1, Math.ceil(words(text, true).length / 430)),
     enabled: true,
     addedAt: Date.now()
   });
@@ -1729,6 +1941,7 @@ async function addManualMaterial() {
 
   await persistMaterialSources();
   renderMaterialSources();
+  renderStudyPlan();
   toast("Texto agregado");
 }
 
@@ -1739,6 +1952,7 @@ async function clearMaterials() {
   state.materialSources = [];
   await persistMaterialSources();
   renderMaterialSources();
+  renderStudyPlan();
 
   if (state.analysisMode === "material") {
     state.analysisMode = "listen";
@@ -1932,6 +2146,141 @@ function exportMapPng() {
   }, "image/png", 1);
 }
 
+
+function visibleStudyData() {
+  return state.showingTranslation && state.translatedStudy
+    ? state.translatedStudy
+    : state.currentStudy;
+}
+
+function visibleSummaryText() {
+  return state.showingTranslation && state.translatedSummary
+    ? state.translatedSummary
+    : state.currentSummary;
+}
+
+function buildStudyDocumentText() {
+  const study = visibleStudyData() || {points:[],questions:[]};
+  const questions = study.questions || [];
+  const lines = [
+    "ESCUCHAMAPA",
+    "",
+    "TEMA",
+    $("detectedTopic").textContent,
+    "",
+    "OBJETIVO",
+    purposeLabel(state.currentProfile?.purpose || state.studyPurpose),
+    "",
+    "RESUMEN",
+    visibleSummaryText(),
+    "",
+    "PUNTOS CLAVE"
+  ];
+
+  study.points.forEach((point,index) => lines.push((index + 1) + ". " + point));
+
+  lines.push("", "PREGUNTAS Y RESPUESTAS");
+  questions.forEach((item,index) => {
+    lines.push(
+      (index + 1) + ". " + (item.question || item),
+      "Respuesta: " + (item.answer || ""),
+      ""
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function exportStudyTxt() {
+  const text = buildStudyDocumentText();
+  downloadBlob(
+    new Blob([text], {type:"text/plain;charset=utf-8"}),
+    safeFilename($("detectedTopic").textContent || "EscuchaMapa-estudio", "txt")
+  );
+  toast("TXT descargado");
+}
+
+function exportStudyDoc() {
+  const study = visibleStudyData() || {points:[],questions:[]};
+  const html =
+    '<!doctype html><html><head><meta charset="utf-8">'
+    + '<style>body{font-family:Arial,sans-serif;line-height:1.5;color:#222;margin:40px}'
+    + 'h1{font-size:24px}h2{font-size:18px;margin-top:26px}li{margin:7px 0}'
+    + '.answer{margin:4px 0 12px 18px;color:#444}</style></head><body>'
+    + '<h1>EscuchaMapa</h1>'
+    + '<h2>' + esc($("detectedTopic").textContent) + '</h2>'
+    + '<p><strong>Objetivo:</strong> ' + esc(purposeLabel(state.currentProfile?.purpose || state.studyPurpose)) + '</p>'
+    + '<h2>Resumen</h2><p>' + esc(visibleSummaryText()).replace(/\n\n/g,"</p><p>") + '</p>'
+    + '<h2>Puntos clave</h2><ol>'
+    + study.points.map(point => '<li>' + esc(point) + '</li>').join("")
+    + '</ol><h2>Preguntas y respuestas</h2><ol>'
+    + (study.questions || []).map(item =>
+        '<li><strong>' + esc(item.question || item) + '</strong>'
+        + '<div class="answer">Respuesta: ' + esc(item.answer || "") + '</div></li>'
+      ).join("")
+    + '</ol></body></html>';
+
+  downloadBlob(
+    new Blob(["\ufeff", html], {type:"application/msword;charset=utf-8"}),
+    safeFilename($("detectedTopic").textContent || "EscuchaMapa-estudio", "doc")
+  );
+  toast("Word descargado");
+}
+
+function exportStudyPdf() {
+  if (!window.jspdf?.jsPDF) {
+    alert("No se pudo cargar el generador de PDF.");
+    return;
+  }
+
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF({unit:"mm",format:"a4"});
+  const margin = 18;
+  const width = 210 - margin * 2;
+  const pageBottom = 279;
+  let y = 20;
+
+  const write = (text,size=10.5,bold=false,gap=3) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setFontSize(size);
+    const paragraphs = String(text || "").split(/\n{2,}/);
+
+    for (const paragraph of paragraphs) {
+      const lines = doc.splitTextToSize(paragraph, width);
+      for (const line of lines) {
+        if (y > pageBottom) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.text(line, margin, y);
+        y += size * .42 + 1.7;
+      }
+      y += 2;
+    }
+    y += gap;
+  };
+
+  const study = visibleStudyData() || {points:[],questions:[]};
+
+  write("EscuchaMapa",18,true,2);
+  write($("detectedTopic").textContent,14,true,5);
+  write("Objetivo: " + purposeLabel(state.currentProfile?.purpose || state.studyPurpose),10,false,5);
+  write("Resumen",12,true,2);
+  write(visibleSummaryText(),10.5,false,5);
+
+  write("Puntos clave",12,true,2);
+  study.points.forEach((point,index) => write((index + 1) + ". " + point,10,false,1));
+
+  write("Preguntas y respuestas",12,true,2);
+  (study.questions || []).forEach((item,index) => {
+    write((index + 1) + ". " + (item.question || item),10.5,true,1);
+    write("Respuesta: " + (item.answer || ""),10,false,2);
+  });
+
+  doc.save(safeFilename($("detectedTopic").textContent || "EscuchaMapa-estudio","pdf"));
+  toast("PDF descargado");
+}
+
 function toast(message) {
   document.querySelector(".export-toast")?.remove();
   const el = document.createElement("div");
@@ -1969,6 +2318,14 @@ $("chooseMaterialFilesBtn").onclick = () => $("materialFilesInput").click();
 $("materialFilesInput").onchange = event => addFilesAsMaterials(event.target.files);
 $("clearMaterialsBtn").onclick = clearMaterials;
 $("analyzeMaterialsBtn").onclick = analyzeMaterials;
+$("studyPurposeSelect").onchange = () => {
+  state.studyPurpose = $("studyPurposeSelect").value;
+  renderStudyPlan();
+  if (state.analysisMode === "material") updateInsights();
+};
+$("exportStudyPdfBtn").onclick = exportStudyPdf;
+$("exportStudyDocBtn").onclick = exportStudyDoc;
+$("exportStudyTxtBtn").onclick = exportStudyTxt;
 
 $("materialDropzone").ondragover = event => {
   event.preventDefault();
@@ -2127,7 +2484,10 @@ if (!window.isSecureContext) {
 }
 
 restore();
-restoreMaterialSources();
+restoreMaterialSources().then(() => {
+  $("studyPurposeSelect").value = state.studyPurpose;
+  renderStudyPlan();
+});
 renderRaw();
 renderHistory();
 updateInsights();
