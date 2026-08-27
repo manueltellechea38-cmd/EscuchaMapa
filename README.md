@@ -5,29 +5,40 @@ PWA para grabar clases o conversaciones, transcribirlas en vivo y convertir el c
 ## Cambios principales
 
 - Interfaz más simple y unificada.
+- Una sola pantalla principal de grabación.
 - Un solo texto principal y un cajón opcional con todo lo escuchado.
 - Nueva sesión, borrar texto, deshacer último fragmento y borrar historial.
-- Mejor manejo de duplicados.
+- Mejor control de duplicados del reconocimiento.
 - Hasta 3 alternativas de SpeechRecognition y selección por confianza.
-- Filtro menos agresivo.
+- Filtro menos agresivo para no perder contenido útil.
 - Español, inglés y modo bilingüe.
-- Contextual biasing con el tema cuando el navegador soporta `SpeechRecognition.phrases`.
-- Mapa conceptual con ramas, frases de apoyo y conceptos relacionados.
-- Botón para mejorar la transcripción con Whisper en el navegador al finalizar.
-- Eliminado el audio silencioso de la v2 porque puede interferir con SpeechRecognition en iOS.
-- `navigator.audioSession.type = "play-and-record"` cuando está disponible.
+- Tema opcional para ayudar a priorizar vocabulario.
+- Mapa conceptual basado en frases reales y conceptos relacionados.
+- Se eliminó el audio silencioso de mantenimiento para evitar interferencias con el reconocimiento.
+- Se intenta usar Audio Session de tipo play-and-record cuando el navegador lo permite.
 - Wake Lock mientras la app está visible y grabando.
 
-## Segundo plano en iPhone
+## Precisión
 
-Una PWA no puede garantizar que iOS mantenga el micrófono activo con la pantalla bloqueada o cuando WebKit suspende la aplicación. Para una garantía real hay que crear una app iOS nativa con AVAudioSession y audio de fondo.
+La transcripción en vivo usa SpeechRecognition del navegador. Su calidad depende del navegador, el sistema operativo, el micrófono, el ruido ambiente y la conexión en los navegadores que procesan la voz mediante servicios remotos.
 
-## Ejecutar
+## Pantalla bloqueada y segundo plano en iPhone
 
-Con VS Code: clic derecho en `index.html` > `Open with Live Server`.
+Una PWA no puede garantizar que iOS mantenga el micrófono capturando cuando la pantalla se bloquea o WebKit suspende la aplicación. EscuchaMapa intenta conservar la sesión mediante las APIs web disponibles, pero una garantía real requiere una aplicación nativa iOS con audio en segundo plano.
 
-O:
+## Ejecutar localmente
+
+Con Live Server:
+1. Abrí la carpeta en VS Code.
+2. Clic derecho en index.html.
+3. Open with Live Server.
+
+También podés usar:
 
 ```powershell
 python -m http.server 5500
 ```
+
+## Publicación
+
+El proyecto está preparado para GitHub Pages desde la rama main.
