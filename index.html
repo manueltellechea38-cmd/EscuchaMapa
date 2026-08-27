@@ -108,6 +108,23 @@
         </div>
       </div>
 
+      <div class="study-config">
+        <label>
+          <span>¿Para qué querés usar este material?</span>
+          <select id="studyPurposeSelect">
+            <option value="understand" selected>Entender bien el tema</option>
+            <option value="review">Repasar</option>
+            <option value="exam">Preparar una prueba</option>
+            <option value="quick">Resumen rápido</option>
+            <option value="deep">Estudiar en profundidad</option>
+          </select>
+        </label>
+        <div id="studyPlanCard" class="study-plan-card">
+          <div><span>PLAN AUTOMÁTICO</span><strong id="studyPlanTitle">Agregá material para calcularlo</strong></div>
+          <p id="studyPlanDetails">La cantidad de resumen, conceptos y preguntas se adapta al tamaño del material.</p>
+        </div>
+      </div>
+
       <div id="materialImportStatus" class="import-status hidden"></div>
     </section>
 
@@ -131,7 +148,15 @@
         <span class="kicker">ANÁLISIS ACTUAL</span>
         <strong id="analysisSourceLabel">Grabación / transcripción</strong>
       </div>
-      <button id="refreshInsightsBtn" class="ghost">Actualizar análisis</button>
+      <div class="study-top-actions">
+        <button id="refreshInsightsBtn" class="ghost">Actualizar análisis</button>
+        <div class="download-menu">
+          <span>Descargar</span>
+          <button id="exportStudyPdfBtn" class="ghost">PDF</button>
+          <button id="exportStudyDocBtn" class="ghost">Word</button>
+          <button id="exportStudyTxtBtn" class="ghost">TXT</button>
+        </div>
+      </div>
     </section>
 
     <section class="grid">
@@ -181,7 +206,7 @@
           <div id="studyPoints" class="study-content"><span class="history-empty">Todavía no hay suficiente contenido.</span></div>
         </div>
         <div class="study-block">
-          <span class="study-label">PREGUNTAS PARA REPASAR</span>
+          <span class="study-label">PREGUNTAS Y RESPUESTAS</span>
           <div id="studyQuestions" class="study-content"><span class="history-empty">Todavía no hay preguntas.</span></div>
         </div>
       </div>
