@@ -538,6 +538,7 @@ function buildMapData(units, topic) {
   return {topic, branches};
 }
 
+
 function shortenMapEvidence(text, maxWords=18) {
   const cleanText = String(text || "").trim();
   if (!cleanText) return "";
@@ -546,17 +547,27 @@ function shortenMapEvidence(text, maxWords=18) {
   return parts.slice(0, maxWords).join(" ") + "…";
 }
 
-function svgWrappedText(text, x, y, maxWidth, lineHeight, className, maxLines=3) {
-  const rawWords = String(text || "").split(/\s+/).filter(Boolean);
-  const avgCharWidth = className === "map-svg-topic" ? 10.5 : className === "map-svg-concept" ? 8.5 : 7;
+function mapRoundRect(ctx, x, y, w, h, radius) {
+  const r = Math.min(radius, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function mapWrapLines(ctx, text, maxWidth, maxLines=4) {
+  const tokens = String(text || "").split(/\s+/).filter(Boolean);
   const lines = [];
   let current = "";
 
-  for (const word of rawWords) {
-    const candidate = current ? current + " " + word : word;
-    if (candidate.length * avgCharWidth > maxWidth && current) {
+  for (const token of tokens) {
+    const candidate = current ? current + " " + token : token;
+    if (ctx.measureText(candidate).width > maxWidth && current) {
       lines.push(current);
-      current = word;
+      current = token;
       if (lines.length >= maxLines - 1) break;
     } else {
       current = candidate;
@@ -565,19 +576,260 @@ function svgWrappedText(text, x, y, maxWidth, lineHeight, className, maxLines=3)
 
   if (current && lines.length < maxLines) lines.push(current);
 
-  const usedWords = lines.join(" ").split(/\s+/).filter(Boolean).length;
-  if (usedWords < rawWords.length && lines.length) {
+  const usedCount = lines.join(" ").split(/\s+/).filter(Boolean).length;
+  if (usedCount < tokens.length && lines.length) {
     lines[lines.length - 1] = lines[lines.length - 1].replace(/[.…]*$/, "") + "…";
   }
 
+  return lines;
+}
+
+function mapDrawCenteredText(ctx, text, x, y, maxWidth, lineHeight, maxLines=4) {
+  const lines = mapWrapLines(ctx, text, maxWidth, maxLines);
   const totalHeight = Math.max(0, (lines.length - 1) * lineHeight);
   const startY = y - totalHeight / 2;
 
-  return '<text x="' + x + '" y="' + startY + '" text-anchor="middle" class="' + className + '">'
-    + lines.map((line, index) =>
-        '<tspan x="' + x + '" dy="' + (index === 0 ? 0 : lineHeight) + '">' + esc(line) + '</tspan>'
-      ).join("")
-    + '</text>';
+  lines.forEach((line, index) => {
+    ctx.fillText(line, x, startY + index * lineHeight);
+  });
+}
+
+function mapDrawArrow(ctx, x1, y1, x2, y2, color="#7c8aa5", width=3, head=12) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(
+    x2 - head * Math.cos(angle - Math.PI / 6),
+    y2 - head * Math.sin(angle - Math.PI / 6)
+  );
+  ctx.lineTo(
+    x2 - head * Math.cos(angle + Math.PI / 6),
+    y2 - head * Math.sin(angle + Math.PI / 6)
+  );
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function mapDrawConnector(ctx, startX, startY, endX, endY, elbowY) {
+  ctx.save();
+  ctx.strokeStyle = "#8491a7";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(startX, elbowY);
+  ctx.lineTo(endX, elbowY);
+  ctx.stroke();
+  ctx.restore();
+
+  mapDrawArrow(ctx, endX, elbowY, endX, endY, "#8491a7", 3, 13);
+}
+
+function drawConceptMapToCanvas(canvas, mapData, scale=2) {
+  const branches = mapData.branches.slice(0, 5);
+  const count = branches.length;
+
+  const logicalWidth = Math.max(1200, 260 * count);
+  const logicalHeight = 760;
+
+  canvas.width = logicalWidth * scale;
+  canvas.height = logicalHeight * scale;
+  canvas.style.width = logicalWidth + "px";
+  canvas.style.height = logicalHeight + "px";
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+  // Background
+  const bg = ctx.createLinearGradient(0, 0, logicalWidth, logicalHeight);
+  bg.addColorStop(0, "#ffffff");
+  bg.addColorStop(1, "#f7f8fc");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+
+  // Small title
+  ctx.fillStyle = "#8b95a7";
+  ctx.font = "600 15px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("MAPA CONCEPTUAL", logicalWidth / 2, 28);
+
+  const centerX = logicalWidth / 2;
+
+  // Main topic node
+  const topicW = Math.min(430, Math.max(320, mapData.topic.length * 11 + 70));
+  const topicH = 92;
+  const topicX = centerX - topicW / 2;
+  const topicY = 70;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(91, 70, 180, .20)";
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 10;
+  mapRoundRect(ctx, topicX, topicY, topicW, topicH, 26);
+  const topicGradient = ctx.createLinearGradient(topicX, topicY, topicX + topicW, topicY + topicH);
+  topicGradient.addColorStop(0, "#7c5cff");
+  topicGradient.addColorStop(1, "#6748dc");
+  ctx.fillStyle = topicGradient;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "700 25px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  mapDrawCenteredText(ctx, mapData.topic, centerX, topicY + topicH / 2 + 1, topicW - 54, 28, 3);
+
+  // Concept positions
+  const side = 115;
+  const conceptY = 285;
+  const conceptW = 190;
+  const conceptH = 72;
+  const explanationY = 490;
+  const explanationW = 220;
+  const explanationH = 150;
+  const trunkY = 220;
+
+  const xs = count === 1
+    ? [centerX]
+    : Array.from({length: count}, (_, i) =>
+        side + i * ((logicalWidth - side * 2) / (count - 1))
+      );
+
+  // Main trunk from topic
+  ctx.save();
+  ctx.strokeStyle = "#8491a7";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(centerX, topicY + topicH);
+  ctx.lineTo(centerX, trunkY);
+  ctx.stroke();
+
+  if (count > 1) {
+    ctx.beginPath();
+    ctx.moveTo(xs[0], trunkY);
+    ctx.lineTo(xs[xs.length - 1], trunkY);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  branches.forEach((branch, index) => {
+    const x = xs[index];
+
+    // Arrows to concept
+    mapDrawArrow(ctx, x, trunkY, x, conceptY - 16, "#8491a7", 3, 13);
+
+    // Concept node shadow + gradient
+    const conceptX = x - conceptW / 2;
+    ctx.save();
+    ctx.shadowColor = "rgba(82, 82, 160, .12)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 7;
+    mapRoundRect(ctx, conceptX, conceptY, conceptW, conceptH, 20);
+    const cg = ctx.createLinearGradient(conceptX, conceptY, conceptX + conceptW, conceptY + conceptH);
+    cg.addColorStop(0, "#eef2ff");
+    cg.addColorStop(1, "#e5e7ff");
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.restore();
+
+    ctx.strokeStyle = "#8b87e8";
+    ctx.lineWidth = 2;
+    mapRoundRect(ctx, conceptX, conceptY, conceptW, conceptH, 20);
+    ctx.stroke();
+
+    ctx.fillStyle = "#37306f";
+    ctx.font = "700 18px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    mapDrawCenteredText(ctx, branch.word, x, conceptY + conceptH / 2, conceptW - 28, 20, 2);
+
+    // Arrow to explanation
+    mapDrawArrow(
+      ctx,
+      x,
+      conceptY + conceptH,
+      x,
+      explanationY - 16,
+      "#9aa5b6",
+      2.5,
+      12
+    );
+
+    // Explanation card
+    const exX = x - explanationW / 2;
+    ctx.save();
+    ctx.shadowColor = "rgba(15, 23, 42, .08)";
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 7;
+    mapRoundRect(ctx, exX, explanationY, explanationW, explanationH, 20);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.restore();
+
+    ctx.strokeStyle = "#d9deea";
+    ctx.lineWidth = 2;
+    mapRoundRect(ctx, exX, explanationY, explanationW, explanationH, 20);
+    ctx.stroke();
+
+    ctx.fillStyle = "#7c5cff";
+    ctx.beginPath();
+    ctx.arc(exX + 24, explanationY + 24, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#334155";
+    ctx.font = "15px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const evidence = shortenMapEvidence(branch.evidence, 20);
+    mapDrawCenteredText(
+      ctx,
+      evidence,
+      x,
+      explanationY + 65,
+      explanationW - 34,
+      20,
+      4
+    );
+
+    if (branch.links?.length) {
+      ctx.fillStyle = "#8491a7";
+      ctx.font = "600 11px Arial, sans-serif";
+      mapDrawCenteredText(
+        ctx,
+        "Relacionado: " + branch.links.slice(0, 3).join(" · "),
+        x,
+        explanationY + explanationH - 22,
+        explanationW - 30,
+        15,
+        2
+      );
+    }
+  });
+
+  // Footer line
+  ctx.fillStyle = "#a0a8b5";
+  ctx.font = "12px Arial, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText("EscuchaMapa", logicalWidth - 34, logicalHeight - 24);
+
+  state.currentMapCanvas = canvas;
 }
 
 function renderConceptMap(mapData) {
@@ -588,72 +840,17 @@ function renderConceptMap(mapData) {
     box.innerHTML =
       '<div class="empty-map"><strong>Necesito un poco más de contenido para generar el mapa.</strong>'
       + '<span>Probá grabando algunos fragmentos más o escribiendo el tema arriba.</span></div>';
+    state.currentMapCanvas = null;
     return;
   }
 
-  const branches = mapData.branches.slice(0, 5);
-  const count = branches.length;
-  const width = Math.max(980, count * 230);
-  const height = 620;
-  const centerX = width / 2;
+  box.innerHTML = "";
+  const canvas = document.createElement("canvas");
+  canvas.className = "concept-map-canvas";
+  canvas.setAttribute("aria-label", "Mapa conceptual");
+  box.appendChild(canvas);
 
-  const topicY = 55;
-  const topicW = 310;
-  const topicH = 82;
-
-  const trunkY = 180;
-  const conceptY = 225;
-  const conceptW = 185;
-  const conceptH = 66;
-
-  const explanationY = 390;
-  const explanationW = 210;
-  const explanationH = 125;
-
-  const sideMargin = 110;
-  const branchXs = count === 1
-    ? [centerX]
-    : Array.from({length: count}, (_, i) =>
-        sideMargin + i * ((width - sideMargin * 2) / (count - 1))
-      );
-
-  let svg = '<svg class="classic-map-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Mapa conceptual">';
-  svg += '<defs>'
-    + '<marker id="mapArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">'
-    + '<path d="M0,0 L0,6 L9,3 z" fill="#64748b"></path>'
-    + '</marker>'
-    + '</defs>';
-
-  svg += '<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"></rect>';
-
-  svg += '<rect x="' + (centerX - topicW / 2) + '" y="' + topicY + '" width="' + topicW + '" height="' + topicH + '" rx="22" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"></rect>';
-  svg += svgWrappedText(mapData.topic, centerX, topicY + topicH / 2 + 2, topicW - 34, 24, "map-svg-topic", 3);
-
-  svg += '<line x1="' + centerX + '" y1="' + (topicY + topicH) + '" x2="' + centerX + '" y2="' + trunkY + '" class="map-svg-line"></line>';
-  svg += '<line x1="' + branchXs[0] + '" y1="' + trunkY + '" x2="' + branchXs[branchXs.length - 1] + '" y2="' + trunkY + '" class="map-svg-line"></line>';
-
-  branches.forEach((branch, index) => {
-    const x = branchXs[index];
-    const evidence = shortenMapEvidence(branch.evidence, 18);
-
-    svg += '<line x1="' + x + '" y1="' + trunkY + '" x2="' + x + '" y2="' + (conceptY - 10) + '" class="map-svg-line" marker-end="url(#mapArrow)"></line>';
-
-    svg += '<rect x="' + (x - conceptW / 2) + '" y="' + conceptY + '" width="' + conceptW + '" height="' + conceptH + '" rx="17" fill="#eef2ff" stroke="#6366f1" stroke-width="2.5"></rect>';
-    svg += svgWrappedText(branch.word, x, conceptY + conceptH / 2 + 2, conceptW - 24, 19, "map-svg-concept", 2);
-
-    svg += '<line x1="' + x + '" y1="' + (conceptY + conceptH) + '" x2="' + x + '" y2="' + (explanationY - 10) + '" class="map-svg-subline" marker-end="url(#mapArrow)"></line>';
-
-    svg += '<rect x="' + (x - explanationW / 2) + '" y="' + explanationY + '" width="' + explanationW + '" height="' + explanationH + '" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"></rect>';
-    svg += svgWrappedText(evidence, x, explanationY + 48, explanationW - 28, 19, "map-svg-explanation", 4);
-
-    if (branch.links?.length) {
-      const related = "Relacionado: " + branch.links.slice(0, 3).join(" · ");
-      svg += svgWrappedText(related, x, explanationY + explanationH - 19, explanationW - 24, 16, "map-svg-related", 2);
-    }
-  });
-
-  svg += '</svg>';
-  box.innerHTML = svg;
+  drawConceptMapToCanvas(canvas, mapData, 2);
 }
 
 function updateInsights(showFeedback=false) {
@@ -972,56 +1169,31 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+
 function exportMapPng() {
   updateInsights();
 
   const data = state.currentMap;
-  const svgElement = $("conceptMap").querySelector("svg.classic-map-svg");
+  const sourceCanvas = state.currentMapCanvas || $("conceptMap").querySelector("canvas.concept-map-canvas");
 
-  if (!data || !data.branches?.length || !svgElement) {
+  if (!data || !data.branches?.length || !sourceCanvas) {
     alert("Todavía no hay suficiente contenido para descargar un mapa.");
     return;
   }
 
-  const clone = svgElement.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  // Re-render in high resolution for a sharp exported PNG.
+  const exportCanvas = document.createElement("canvas");
+  drawConceptMapToCanvas(exportCanvas, data, 3);
 
-  const serializer = new XMLSerializer();
-  const svgString = serializer.serializeToString(clone);
-  const svgBlob = new Blob([svgString], {type: "image/svg+xml;charset=utf-8"});
-  const svgUrl = URL.createObjectURL(svgBlob);
-  const image = new Image();
+  exportCanvas.toBlob(blob => {
+    if (!blob) {
+      alert("No pude generar la imagen del mapa.");
+      return;
+    }
 
-  image.onload = () => {
-    const viewBox = svgElement.viewBox.baseVal;
-    const scale = 2.5;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(viewBox.width * scale);
-    canvas.height = Math.round(viewBox.height * scale);
-
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    canvas.toBlob(blob => {
-      URL.revokeObjectURL(svgUrl);
-      if (!blob) {
-        alert("No pude generar la imagen del mapa.");
-        return;
-      }
-
-      downloadBlob(blob, safeFilename(data.topic || "mapa-conceptual", "png"));
-      toast("Mapa PNG descargado");
-    }, "image/png", 1);
-  };
-
-  image.onerror = () => {
-    URL.revokeObjectURL(svgUrl);
-    alert("No pude generar la imagen del mapa.");
-  };
-
-  image.src = svgUrl;
+    downloadBlob(blob, safeFilename(data.topic || "mapa-conceptual", "png"));
+    toast("Mapa PNG descargado");
+  }, "image/png", 1);
 }
 
 function toast(message) {
